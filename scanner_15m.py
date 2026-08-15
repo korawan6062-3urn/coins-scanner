@@ -3,22 +3,22 @@ import pandas as pd
 import numpy as np
 import time
 
-# --- ข้อมูล Telegram ---
+# --- ข้อมูลการแจ้งเตือน Telegram ---
 TELEGRAM_TOKEN = "8903982584:AAF1EJ1OzjFpYzWJzAHeti8_xbQgVpYy8CU"
 TELEGRAM_CHAT_ID = "1376495243"
 
-# --- Watchlist 30 เหรียญคุณภาพ ---
+# --- Watchlist คุณภาพสูง 31 ตัว (รวมทองคำ PAXG) เรียง A -> Z ---
 WATCHLIST = sorted([
     "AAVE", "ADA", "APT", "AVAX", "BCH",
     "BNB", "BTC", "DOT", "ENA", "ETH",
     "FET", "INJ", "JTO", "KAS", "LDO",
-    "LINK", "LTC", "NEAR", "ONDO", "PENDLE",
-    "RENDER", "SEI", "SOL", "SUI", "TAO",
-    "TIA", "TRX", "UNI", "XLM", "XRP"
+    "LINK", "LTC", "NEAR", "ONDO", "PAXG",
+    "PENDLE", "RENDER", "SEI", "SOL", "SUI",
+    "TAO", "TIA", "TRX", "UNI", "XLM", "XRP"
 ])
 
 def get_candles(coin, interval="4h", limit=120):
-    """ดึงแท่งเทียนจาก Gate.io (หลัก) หรือ KuCoin (สำรอง)"""
+    """ดึงข้อมูลกราฟจาก Gate.io (หลัก) หรือ KuCoin (สำรอง)"""
     try:
         url = f"https://api.gateio.ws/api/v4/spot/candlesticks?currency_pair={coin}_USDT&interval={interval}&limit={limit}"
         res = requests.get(url, timeout=5).json()
@@ -33,7 +33,6 @@ def get_candles(coin, interval="4h", limit=120):
     except Exception:
         pass
 
-    # KuCoin API Fallback
     ku_type = "4hour" if interval == "4h" else "15min"
     try:
         url = f"https://api.kucoin.com/api/v1/market/candles?type={ku_type}&symbol={coin}-USDT"
@@ -73,24 +72,21 @@ def check_4h_trend(df_4h):
 
 def check_15m_trigger(df_15m, trend_4h):
     """
-    เช็กจังหวะจบชุดย่อ 15M (เพิ่งเปลี่ยนสถานะเป็น Golden/Death Cross ภายใน 1-2 แท่งล่าสุด)
+    เช็กจังหวะจบชุดย่อ 15M (เพิ่งเปลี่ยนสถานะเป็น Golden/Death Cross ภายในแท่งล่าสุด)
     """
-    # คำนวณ EMA 89
     df_15m["ema89"] = df_15m["close"].ewm(span=89, adjust=False).mean()
 
-    # คำนวณ Ichimoku
     tenkan = (df_15m["high"].rolling(9).max() + df_15m["low"].rolling(9).min()) / 2
     kijun = (df_15m["high"].rolling(26).max() + df_15m["low"].rolling(26).min()) / 2
     span_a = ((tenkan + kijun) / 2).shift(26)
     span_b = ((df_15m["high"].rolling(52).max() + df_15m["low"].rolling(52).min()) / 2).shift(26)
 
-    # คำนวณ Custom MACD (12, 26, SMA 9)
+    # Custom MACD (12, 26, SMA 9)
     fast = df_15m["close"].ewm(span=12, adjust=False).mean()
     slow = df_15m["close"].ewm(span=26, adjust=False).mean()
     macd = fast - slow
     signal = macd.rolling(window=9).mean()
 
-    # ดูข้อมูล 2 แท่งล่าสุด (แท่งก่อนหน้า vs แท่งปัจจุบัน)
     c_prev, c_now = df_15m["close"].iloc[-2], df_15m["close"].iloc[-1]
     ema_now = df_15m["ema89"].iloc[-1]
     top_kumo_now = max(span_a.iloc[-1], span_b.iloc[-1])
@@ -99,7 +95,7 @@ def check_15m_trigger(df_15m, trend_4h):
     m_prev, m_now = macd.iloc[-2], macd.iloc[-1]
     s_prev, s_now = signal.iloc[-2], signal.iloc[-1]
 
-    # เงื่อนไข LONG: 4H=BUY, 15M พ้นเมฆ + เหนือ EMA89 + MACD เพิ่งตัด Golden Cross สดๆ
+    # เงื่อนไข LONG
     if trend_4h == "BUY":
         is_above_kumo = c_now > top_kumo_now
         is_above_ema = c_now > ema_now
@@ -107,7 +103,7 @@ def check_15m_trigger(df_15m, trend_4h):
         if is_above_kumo and is_above_ema and just_cross_up:
             return "TRIGGER_LONG"
 
-    # เงื่อนไข SHORT: 4H=SELL, 15M ใต้เมฆ + ใต้ EMA89 + MACD เพิ่งตัด Death Cross สดๆ
+    # เงื่อนไข SHORT
     elif trend_4h == "SELL":
         is_below_kumo = c_now < bot_kumo_now
         is_below_ema = c_now < ema_now
@@ -126,7 +122,7 @@ def main():
     triggers = []
 
     for coin in WATCHLIST:
-        # 1. เช็ก 4H ก่อน (ถ้าไม่ผ่าน ข้ามทันที ไม่เปลืองรอบ)
+        # 1. เช็ก 4H ด่านแรก
         df_4h = get_candles(coin, interval="4h", limit=90)
         if df_4h is None:
             continue
@@ -135,7 +131,7 @@ def main():
         if trend_4h == "NONE":
             continue
 
-        # 2. ถ้า 4H ผ่าน ค่อยดึง 15M มาเช็กจังหวะ Trigger
+        # 2. ถ้า 4H ผ่าน เช็ก 15M ด่านสอง
         df_15m = get_candles(coin, interval="15m", limit=90)
         if df_15m is None:
             continue
@@ -150,7 +146,7 @@ def main():
 
         time.sleep(0.04)
 
-    # ส่งเฉพาะเมื่อมีสัญญาณใหม่เกิดขึ้นจริงๆ เท่านั้น
+    # ส่งแจ้งเตือนเฉพาะเมื่อมีจังหวะเข้าทำใหม่จริงๆ เท่านั้น
     if triggers:
         msg = ["⚡️ *[15M A.Aun SETUP TRIGGER]*", "────────────────────────"]
         msg.extend(triggers)
