@@ -6,19 +6,27 @@ import numpy as np
 TELEGRAM_TOKEN = "8903982584:AAF1EJ1OzjFpYzWJzAHeti8_xbQgVpYy8CU"
 TELEGRAM_CHAT_ID = "1376495243"
 
-# --- 2. รายชื่อ 10 เหรียญ Futures ---
+# --- 2. รายชื่อ 10 เหรียญ ---
 SYMBOLS = [
     "BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT",
     "DOGEUSDT", "ADAUSDT", "AVAXUSDT", "NEARUSDT", "SUIUSDT"
 ]
 
 def get_4h_data(symbol):
-    url = f"https://fapi.binance.com/fapi/v1/klines?symbol={symbol}&interval=4h&limit=150"
-    res = requests.get(url, timeout=10).json()
-    df = pd.DataFrame(res, columns=[
-        "open_time", "open", "high", "low", "close", "volume",
-        "close_time", "qav", "num_trades", "taker_base_vol", "taker_quote_vol", "ignore"
-    ])
+    # ดึงข้อมูลจาก Bybit Futures API (ไม่บล็อก IP บน Cloud / GitHub Actions)
+    url = f"https://api.bybit.com/v5/market/kline?category=linear&symbol={symbol}&interval=240&limit=150"
+    headers = {"User-Agent": "Mozilla/5.0"}
+    res = requests.get(url, headers=headers, timeout=10).json()
+    
+    if "result" not in res or "list" not in res["result"] or not res["result"]["list"]:
+        raise Exception("No data returned")
+        
+    raw_data = res["result"]["list"]
+    # Bybit ส่งข้อมูลแท่งล่าสุดขึ้นก่อน จึงต้องกลับลำดับแถว
+    df = pd.DataFrame(raw_data, columns=[
+        "startTime", "open", "high", "low", "close", "volume", "turnover"
+    ]).iloc[::-1].reset_index(drop=True)
+    
     df["close"] = df["close"].astype(float)
     df["high"] = df["high"].astype(float)
     df["low"] = df["low"].astype(float)
