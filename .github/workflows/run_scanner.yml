@@ -2,8 +2,8 @@ name: Daily Crypto 4H Scanner
 
 on:
   schedule:
-    # 00:00 UTC = 07:00 น. เวลาไทยของทุกวัน
-    - cron: '0 0 * * *'
+    # 00:00, 08:00, 16:00 UTC = 07:00, 15:00, 23:00 น. (เวลาไทย)
+    - cron: '0 0,8,16 * * *'
   # เปิดให้สามารถกดสั่งรันด้วยมือเพื่อทดสอบได้ตลอดเวลา
   workflow_dispatch:
 
@@ -12,10 +12,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: ดึงโค้ดโปรเจกต์
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: ติดตั้ง Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
