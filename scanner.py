@@ -17,7 +17,7 @@ WATCHLIST = sorted([
     "TIA", "TRX", "UNI", "XLM", "XRP"
 ])
 
-def get_4h_candles_from_exchange(coin):
+def get_4h_candles(coin):
     """ดึงข้อมูลกราฟ 4H จาก Gate.io หรือ KuCoin"""
     # ช่องทางหลัก: Gate.io API
     try:
@@ -52,8 +52,52 @@ def get_4h_candles_from_exchange(coin):
 
     return None
 
+def detect_macd_divergence(df, lookback=35, pivot_period=4):
+    """
+    ตรวจจับ 4H Regular Divergence โดยใช้ Custom MACD (12, 26, SMA 9)
+    """
+    try:
+        # Custom MACD Calculation
+        fast_ema = df["close"].ewm(span=12, adjust=False).mean()
+        slow_ema = df["close"].ewm(span=26, adjust=False).mean()
+        macd = fast_ema - slow_ema
+
+        sub_df = df.tail(lookback).copy().reset_index(drop=True)
+        sub_macd = macd.tail(lookback).values
+        highs = sub_df["high"].values
+        lows = sub_df["low"].values
+        n = len(sub_df)
+
+        # ค้นหา Pivot Highs และ Pivot Lows
+        ph_idx = []
+        pl_idx = []
+
+        for i in range(pivot_period, n - pivot_period):
+            if highs[i] == max(highs[i - pivot_period:i + pivot_period + 1]):
+                ph_idx.append(i)
+            if lows[i] == min(lows[i - pivot_period:i + pivot_period + 1]):
+                pl_idx.append(i)
+
+        # 1. ตรวจ Bearish Divergence (Price HH แต่ MACD LH)
+        if len(ph_idx) >= 2:
+            p1, p2 = ph_idx[-2], ph_idx[-1]
+            if (n - 1 - p2) <= 6:  # เกิดขึ้นในแท่งล่าสุด
+                if highs[p2] > highs[p1] and sub_macd[p2] < sub_macd[p1]:
+                    return " [⚠️ Bear Div]"
+
+        # 2. ตรวจ Bullish Divergence (Price LL แต่ MACD HL)
+        if len(pl_idx) >= 2:
+            p1, p2 = pl_idx[-2], pl_idx[-1]
+            if (n - 1 - p2) <= 6:  # เกิดขึ้นในแท่งล่าสุด
+                if lows[p2] < lows[p1] and sub_macd[p2] > sub_macd[p1]:
+                    return " [🔥 Bull Div]"
+    except Exception:
+        pass
+
+    return ""
+
 def check_setup(df):
-    """คำนวณตามสูตร A.Aun (EMA89 + Ichimoku Cloud 4H)"""
+    """คำนวณแยกสถานะ Cloud + EMA89 และตรวจ Divergence"""
     df["ema89"] = df["close"].ewm(span=89, adjust=False).mean()
 
     # Ichimoku Cloud (9, 26, 52)
@@ -70,14 +114,27 @@ def check_setup(df):
     top_kumo = max(kumo_a.iloc[-1], kumo_b.iloc[-1])
     bot_kumo = min(kumo_a.iloc[-1], kumo_b.iloc[-1])
 
-    if last_close > top_kumo and last_close > last_ema89:
-        return "BUY", "เหนือเมฆ + เหนือ EMA89"
-    elif last_close < bot_kumo and last_close < last_ema89:
-        return "SELL", "ใต้เมฆ + ใต้ EMA89"
-    elif bot_kumo <= last_close <= top_kumo:
-        return "UNKNOWN", "อยู่ในเนื้อเมฆ (Sideway)"
+    # 1. สถานะ Ichimoku
+    if last_close > top_kumo:
+        ichi_status = "เหนือเมฆ"
+    elif last_close < bot_kumo:
+        ichi_status = "ใต้เมฆ"
     else:
-        return "UNKNOWN", "ทิศทางขัดแย้งกับ EMA89"
+        ichi_status = "ในเนื้อเมฆ"
+
+    # 2. สถานะ EMA 89
+    ema_status = "เหนือ EMA89" if last_close >= last_ema89 else "ใต้ EMA89"
+
+    # 3. จัดหมวดหมู่ Action
+    if ichi_status == "เหนือเมฆ" and ema_status == "เหนือ EMA89":
+        category = "BUY"
+    elif ichi_status == "ใต้เมฆ" and ema_status == "ใต้ EMA89":
+        category = "SELL"
+    else:
+        category = "UNKNOWN"
+
+    div_tag = detect_macd_divergence(df)
+    return category, ichi_status, ema_status, div_tag
 
 def send_telegram(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
@@ -91,10 +148,10 @@ def main():
 
     for coin in WATCHLIST:
         sym = f"{coin}USDT"
-        df = get_4h_candles_from_exchange(coin)
+        df = get_4h_candles(coin)
         if df is not None:
-            category, reason = check_setup(df)
-            item_text = f"• *{sym}* : {reason}"
+            category, ichi_status, ema_status, div_tag = check_setup(df)
+            item_text = f"• `{sym:<10}:` {ichi_status} | {ema_status}{div_tag}"
 
             if category == "BUY":
                 buy_list.append(item_text)
@@ -103,11 +160,12 @@ def main():
             else:
                 unknown_list.append(item_text)
         else:
-            unknown_list.append(f"• *{sym}* : ⚠️ ดึงข้อมูลล้มเหลว")
+            item_text = f"• `{sym:<10}:` ⚠️ ดึงข้อมูลล้มเหลว"
+            unknown_list.append(item_text)
 
         time.sleep(0.05)
 
-    # 3. จัด Format ข้อความส่งออก (คลีน ไม่มีตัวเลขรบกวนสายตา)
+    # 4. จัดรูปแบบข้อความแบบจัดแนวคอลัมน์สมบูรณ์
     report = ["📊 *4H (A.Aun Setup) - Watchlist*", "────────────────────────"]
 
     report.append(f"🟢 *BUY (LONG)* [{len(buy_list)}]")
