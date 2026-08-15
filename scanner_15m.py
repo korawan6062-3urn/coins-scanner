@@ -7,7 +7,7 @@ import time
 TELEGRAM_TOKEN = "8903982584:AAF1EJ1OzjFpYzWJzAHeti8_xbQgVpYy8CU"
 TELEGRAM_CHAT_ID = "1376495243"
 
-# --- Watchlist คุณภาพสูง 31 ตัว (รวมทองคำ PAXG) เรียง A -> Z ---
+# --- Watchlist 31 ตัว (A -> Z) ---
 WATCHLIST = sorted([
     "AAVE", "ADA", "APT", "AVAX", "BCH",
     "BNB", "BTC", "DOT", "ENA", "ETH",
@@ -18,7 +18,6 @@ WATCHLIST = sorted([
 ])
 
 def get_candles(coin, interval="4h", limit=120):
-    """ดึงข้อมูลกราฟจาก Gate.io (หลัก) หรือ KuCoin (สำรอง)"""
     try:
         url = f"https://api.gateio.ws/api/v4/spot/candlesticks?currency_pair={coin}_USDT&interval={interval}&limit={limit}"
         res = requests.get(url, timeout=5).json()
@@ -51,8 +50,37 @@ def get_candles(coin, interval="4h", limit=120):
 
     return None
 
+def detect_macd_divergence(df, lookback=35, pivot_period=3):
+    """ตรวจจับ Regular Divergence (Custom MACD 12, 26, SMA 9)"""
+    try:
+        fast_ema = df["close"].ewm(span=12, adjust=False).mean()
+        slow_ema = df["close"].ewm(span=26, adjust=False).mean()
+        macd = fast_ema - slow_ema
+
+        sub_df = df.tail(lookback).copy().reset_index(drop=True)
+        sub_macd = macd.tail(lookback).values
+        highs = sub_df["high"].values
+        lows = sub_df["low"].values
+        n = len(sub_df)
+
+        ph_idx = [i for i in range(pivot_period, n - pivot_period) if highs[i] == max(highs[i - pivot_period:i + pivot_period + 1])]
+        pl_idx = [i for i in range(pivot_period, n - pivot_period) if lows[i] == min(lows[i - pivot_period:i + pivot_period + 1])]
+
+        if len(ph_idx) >= 2:
+            p1, p2 = ph_idx[-2], ph_idx[-1]
+            if (n - 1 - p2) <= 5 and highs[p2] > highs[p1] and sub_macd[p2] < sub_macd[p1]:
+                return "BEAR_DIV"
+
+        if len(pl_idx) >= 2:
+            p1, p2 = pl_idx[-2], pl_idx[-1]
+            if (n - 1 - p2) <= 5 and lows[p2] < lows[p1] and sub_macd[p2] > sub_macd[p1]:
+                return "BULL_DIV"
+    except Exception:
+        pass
+
+    return "NONE"
+
 def check_4h_trend(df_4h):
-    """เช็กภาพใหญ่ 4H: ต้องชัดเจน (BUY หรือ SELL เท่านั้น)"""
     ema89 = df_4h["close"].ewm(span=89, adjust=False).mean()
     tenkan = (df_4h["high"].rolling(9).max() + df_4h["low"].rolling(9).min()) / 2
     kijun = (df_4h["high"].rolling(26).max() + df_4h["low"].rolling(26).min()) / 2
@@ -71,17 +99,12 @@ def check_4h_trend(df_4h):
     return "NONE"
 
 def check_15m_trigger(df_15m, trend_4h):
-    """
-    เช็กจังหวะจบชุดย่อ 15M (เพิ่งเปลี่ยนสถานะเป็น Golden/Death Cross ภายในแท่งล่าสุด)
-    """
     df_15m["ema89"] = df_15m["close"].ewm(span=89, adjust=False).mean()
-
     tenkan = (df_15m["high"].rolling(9).max() + df_15m["low"].rolling(9).min()) / 2
     kijun = (df_15m["high"].rolling(26).max() + df_15m["low"].rolling(26).min()) / 2
     span_a = ((tenkan + kijun) / 2).shift(26)
     span_b = ((df_15m["high"].rolling(52).max() + df_15m["low"].rolling(52).min()) / 2).shift(26)
 
-    # Custom MACD (12, 26, SMA 9)
     fast = df_15m["close"].ewm(span=12, adjust=False).mean()
     slow = df_15m["close"].ewm(span=26, adjust=False).mean()
     macd = fast - slow
@@ -95,20 +118,11 @@ def check_15m_trigger(df_15m, trend_4h):
     m_prev, m_now = macd.iloc[-2], macd.iloc[-1]
     s_prev, s_now = signal.iloc[-2], signal.iloc[-1]
 
-    # เงื่อนไข LONG
     if trend_4h == "BUY":
-        is_above_kumo = c_now > top_kumo_now
-        is_above_ema = c_now > ema_now
-        just_cross_up = (m_prev <= s_prev) and (m_now > s_now)
-        if is_above_kumo and is_above_ema and just_cross_up:
+        if c_now > top_kumo_now and c_now > ema_now and (m_prev <= s_prev) and (m_now > s_now):
             return "TRIGGER_LONG"
-
-    # เงื่อนไข SHORT
     elif trend_4h == "SELL":
-        is_below_kumo = c_now < bot_kumo_now
-        is_below_ema = c_now < ema_now
-        just_cross_down = (m_prev >= s_prev) and (m_now < s_now)
-        if is_below_kumo and is_below_ema and just_cross_down:
+        if c_now < bot_kumo_now and c_now < ema_now and (m_prev >= s_prev) and (m_now < s_now):
             return "TRIGGER_SHORT"
 
     return "NONE"
@@ -122,7 +136,6 @@ def main():
     triggers = []
 
     for coin in WATCHLIST:
-        # 1. เช็ก 4H ด่านแรก
         df_4h = get_candles(coin, interval="4h", limit=90)
         if df_4h is None:
             continue
@@ -131,27 +144,56 @@ def main():
         if trend_4h == "NONE":
             continue
 
-        # 2. ถ้า 4H ผ่าน เช็ก 15M ด่านสอง
         df_15m = get_candles(coin, interval="15m", limit=90)
         if df_15m is None:
             continue
 
         signal = check_15m_trigger(df_15m, trend_4h)
+        if signal == "NONE":
+            continue
+
+        # ตรวจสอบ Divergence ประกอบการตัดสินใจ
+        div_4h = detect_macd_divergence(df_4h)
+        div_15m = detect_macd_divergence(df_15m)
+
         sym = f"{coin}USDT"
+        warnings = []
 
         if signal == "TRIGGER_LONG":
-            triggers.append(f"🟢 *LONG ENTRY TRIGGER:* `{sym}`\n• *4H Trend:* เหนือเมฆ + เหนือ EMA89\n• *15M Setup:* พ้นเมฆ + MACD เพิ่ง Golden Cross 🔥")
+            if div_4h == "BEAR_DIV":
+                warnings.append("⚠️ 4H มี Bear Div (ระวังจบรอบ)")
+            if div_15m == "BEAR_DIV":
+                warnings.append("⚠️ 15M มี Bear Div (ระวังพักลึก)")
+            
+            warn_text = f"\n• *คำเตือน:* {', '.join(warnings)}" if warnings else "\n• *Divergence:* ปลอดภัย (ไม่มีสัญญาณขัดแย้ง)"
+            triggers.append(
+                f"🟢 *LONG ENTRY TRIGGER:* `{sym}`\n"
+                f"• *4H Trend:* เหนือเมฆ + เหนือ EMA89\n"
+                f"• *15M Setup:* พ้นเมฆ + MACD เพิ่ง Golden Cross 🔥"
+                f"{warn_text}"
+            )
+
         elif signal == "TRIGGER_SHORT":
-            triggers.append(f"🔴 *SHORT ENTRY TRIGGER:* `{sym}`\n• *4H Trend:* ใต้เมฆ + ใต้ EMA89\n• *15M Setup:* หลุดเมฆ + MACD เพิ่ง Death Cross ⚠️")
+            if div_4h == "BULL_DIV":
+                warnings.append("🔥 4H มี Bull Div (ระวังเด้งสวน)")
+            if div_15m == "BULL_DIV":
+                warnings.append("🔥 15M มี Bull Div (ระวังดีดแรง)")
+
+            warn_text = f"\n• *คำเตือน:* {', '.join(warnings)}" if warnings else "\n• *Divergence:* ปลอดภัย (ไม่มีสัญญาณขัดแย้ง)"
+            triggers.append(
+                f"🔴 *SHORT ENTRY TRIGGER:* `{sym}`\n"
+                f"• *4H Trend:* ใต้เมฆ + ใต้ EMA89\n"
+                f"• *15M Setup:* หลุดเมฆ + MACD เพิ่ง Death Cross ⚠️"
+                f"{warn_text}"
+            )
 
         time.sleep(0.04)
 
-    # ส่งแจ้งเตือนเฉพาะเมื่อมีจังหวะเข้าทำใหม่จริงๆ เท่านั้น
     if triggers:
         msg = ["⚡️ *[15M A.Aun SETUP TRIGGER]*", "────────────────────────"]
         msg.extend(triggers)
         msg.append("────────────────────────")
-        msg.append("👉 *Action:* เปิดกราฟ 5M ดูจังหวะย่อแตะ EMA 21/35 เพื่อกด Order ทันที!")
+        msg.append("👉 *Action:* เปิด 5M รอย่อ Retest EMA 21/35 (หากติดคำเตือน ให้ลดขนาดไม้ลงครึ่งหนึ่ง)")
         send_telegram("\n".join(msg))
 
 if __name__ == "__main__":
