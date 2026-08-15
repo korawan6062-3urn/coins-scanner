@@ -3,23 +3,22 @@ import pandas as pd
 import numpy as np
 import time
 
-# --- 1. ข้อมูลการแจ้งเตือน Telegram ---
+# --- ข้อมูลการแจ้งเตือน Telegram ---
 TELEGRAM_TOKEN = "8903982584:AAF1EJ1OzjFpYzWJzAHeti8_xbQgVpYy8CU"
 TELEGRAM_CHAT_ID = "1376495243"
 
-# --- 2. Top 30 Curated Watchlist (A -> Z, No Meme, No Stablecoin) ---
+# --- Watchlist คุณภาพสูง 31 ตัว (รวมทองคำ PAXG) เรียง A -> Z ---
 WATCHLIST = sorted([
     "AAVE", "ADA", "APT", "AVAX", "BCH",
     "BNB", "BTC", "DOT", "ENA", "ETH",
     "FET", "INJ", "JTO", "KAS", "LDO",
-    "LINK", "LTC", "NEAR", "ONDO", "PENDLE",
-    "RENDER", "SEI", "SOL", "SUI", "TAO",
-    "TIA", "TRX", "UNI", "XLM", "XRP"
+    "LINK", "LTC", "NEAR", "ONDO", "PAXG",
+    "PENDLE", "RENDER", "SEI", "SOL", "SUI",
+    "TAO", "TIA", "TRX", "UNI", "XLM", "XRP"
 ])
 
 def get_4h_candles(coin):
-    """ดึงข้อมูลกราฟ 4H จาก Gate.io หรือ KuCoin"""
-    # ช่องทางหลัก: Gate.io API
+    """ดึงข้อมูลกราฟ 4H จาก Gate.io (หลัก) หรือ KuCoin (สำรอง)"""
     try:
         url = f"https://api.gateio.ws/api/v4/spot/candlesticks?currency_pair={coin}_USDT&interval=4h&limit=150"
         res = requests.get(url, timeout=5).json()
@@ -34,7 +33,6 @@ def get_4h_candles(coin):
     except Exception:
         pass
 
-    # ช่องทางสำรอง: KuCoin API
     try:
         url = f"https://api.kucoin.com/api/v1/market/candles?type=4hour&symbol={coin}-USDT"
         res = requests.get(url, timeout=5).json()
@@ -53,11 +51,8 @@ def get_4h_candles(coin):
     return None
 
 def detect_macd_divergence(df, lookback=35, pivot_period=4):
-    """
-    ตรวจจับ 4H Regular Divergence โดยใช้ Custom MACD (12, 26, SMA 9)
-    """
+    """ตรวจจับ 4H Regular Divergence ด้วย Custom MACD (12, 26, SMA 9)"""
     try:
-        # Custom MACD Calculation
         fast_ema = df["close"].ewm(span=12, adjust=False).mean()
         slow_ema = df["close"].ewm(span=26, adjust=False).mean()
         macd = fast_ema - slow_ema
@@ -68,7 +63,6 @@ def detect_macd_divergence(df, lookback=35, pivot_period=4):
         lows = sub_df["low"].values
         n = len(sub_df)
 
-        # ค้นหา Pivot Highs และ Pivot Lows
         ph_idx = []
         pl_idx = []
 
@@ -78,17 +72,17 @@ def detect_macd_divergence(df, lookback=35, pivot_period=4):
             if lows[i] == min(lows[i - pivot_period:i + pivot_period + 1]):
                 pl_idx.append(i)
 
-        # 1. ตรวจ Bearish Divergence (Price HH แต่ MACD LH)
+        # Bearish Divergence
         if len(ph_idx) >= 2:
             p1, p2 = ph_idx[-2], ph_idx[-1]
-            if (n - 1 - p2) <= 6:  # เกิดขึ้นในแท่งล่าสุด
+            if (n - 1 - p2) <= 6:
                 if highs[p2] > highs[p1] and sub_macd[p2] < sub_macd[p1]:
                     return " [⚠️ Bear Div]"
 
-        # 2. ตรวจ Bullish Divergence (Price LL แต่ MACD HL)
+        # Bullish Divergence
         if len(pl_idx) >= 2:
             p1, p2 = pl_idx[-2], pl_idx[-1]
-            if (n - 1 - p2) <= 6:  # เกิดขึ้นในแท่งล่าสุด
+            if (n - 1 - p2) <= 6:
                 if lows[p2] < lows[p1] and sub_macd[p2] > sub_macd[p1]:
                     return " [🔥 Bull Div]"
     except Exception:
@@ -97,7 +91,7 @@ def detect_macd_divergence(df, lookback=35, pivot_period=4):
     return ""
 
 def check_setup(df):
-    """คำนวณแยกสถานะ Cloud + EMA89 และตรวจ Divergence"""
+    """คำนวณแยกสถานะ Ichimoku Cloud + EMA89 และตรวจ Divergence"""
     df["ema89"] = df["close"].ewm(span=89, adjust=False).mean()
 
     # Ichimoku Cloud (9, 26, 52)
@@ -163,9 +157,9 @@ def main():
             item_text = f"• `{sym:<10}:` ⚠️ ดึงข้อมูลล้มเหลว"
             unknown_list.append(item_text)
 
-        time.sleep(0.05)
+        time.sleep(0.04)
 
-    # 4. จัดรูปแบบข้อความแบบจัดแนวคอลัมน์สมบูรณ์
+    # จัดรูปแบบข้อความส่งออก
     report = ["📊 *4H (A.Aun Setup) - Watchlist*", "────────────────────────"]
 
     report.append(f"🟢 *BUY (LONG)* [{len(buy_list)}]")
