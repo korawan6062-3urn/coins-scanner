@@ -7,33 +7,62 @@ import time
 TELEGRAM_TOKEN = "8903982584:AAF1EJ1OzjFpYzWJzAHeti8_xbQgVpYy8CU"
 TELEGRAM_CHAT_ID = "1376495243"
 
-# --- รายชื่อ Stablecoin, Wrapped Token และ CeFi Exchange Tokens ที่ต้องตัดทิ้ง ---
+# --- รายชื่อ Stablecoin / Wrapped Token ที่ต้องละเว้นจาก CoinGecko ---
 EXCLUDE_TOKENS = {
     "USDT", "USDC", "DAI", "FDUSD", "TUSD", "USDD", "USDE", "PYUSD",
     "BUSD", "EUR", "USD", "USTC", "FRAX", "LUSD", "WBTC", "WETH",
     "STETH", "WEETH", "CBETH", "RETH", "CETH", "BSC-USD", "USDS",
-    "USD1", "USD0", "LEO", "WBT", "OKB", "MNT", "GT", "KCS", "HT"
+    "USD1", "USD0", "LEO", "WBT", "MNT", "KCS", "OKB", "GT", "HT"
 }
 
-def is_valid_crypto(symbol):
-    """ตรวจสอบว่าเป็นเหรียญคริปโตแท้จริง ไม่ใช่ Stablecoin หรือ RWA"""
+def is_valid_token(symbol):
     s = symbol.upper()
     if s in EXCLUDE_TOKENS:
         return False
-    if "_" in s or "." in s or "-" in s:  # ตัดเหรียญ RWA หุ้น/พันธบัตร
+    if "_" in s or "." in s or "-" in s:
         return False
     if s.startswith("USD") or s.endswith("USD") or s.endswith("EUR"):
         return False
     return True
 
-def get_4h_data(coin):
-    """ดึงกราฟ 4H จาก KuCoin หรือ Gate.io"""
+# ========================================================
+# 1. ส่วนดึงอันดับ Market Cap สดแท้จริงจาก CoinGecko
+# ========================================================
+def get_coingecko_top_candidates():
+    """ดึงลิสต์เหรียญ Top Market Cap จาก CoinGecko โดยตรง"""
     try:
-        url = f"https://api.kucoin.com/api/v1/market/candles?type=4hour&symbol={coin}-USDT"
+        url = "https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=50&page=1"
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+        res = requests.get(url, headers=headers, timeout=10).json()
+        if isinstance(res, list) and len(res) > 0:
+            candidates = []
+            for item in res:
+                sym = item.get("symbol", "").upper()
+                if is_valid_token(sym):
+                    candidates.append(sym)
+            return candidates
+    except Exception:
+        pass
+
+    # ลิสต์สำรองมาตรฐานระดับโลก กรณีเชื่อมต่อ CoinGecko ไม่สำเร็จ
+    return [
+        "BTC", "ETH", "SOL", "BNB", "XRP", "DOGE", "ADA", "TRX", "AVAX", "SUI",
+        "LINK", "NEAR", "DOT", "APT", "ICP", "LTC", "FET", "UNI", "TAO", "AAVE",
+        "RENDER", "SHIB", "PEPE", "BCH", "XLM", "ATOM", "ETC", "FIL", "ARB", "OP"
+    ]
+
+# ========================================================
+# 2. ส่วนดึงข้อมูลแท่งเทียน 4H จาก Gate.io / KuCoin
+# ========================================================
+def get_4h_candles_from_exchange(coin):
+    """ดึงข้อมูลกราฟ 4H โดยใช้ Gate.io เป็นหลัก และ KuCoin เป็นสำรอง"""
+    # ช่องทางหลัก: Gate.io API
+    try:
+        url = f"https://api.gateio.ws/api/v4/spot/candlesticks?currency_pair={coin}_USDT&interval=4h&limit=150"
         res = requests.get(url, timeout=5).json()
-        if res.get("code") == "200000" and res.get("data") and len(res["data"]) >= 90:
-            raw = res["data"]
-            df = pd.DataFrame(raw, columns=["time", "open", "close", "high", "low", "volume", "turnover"])
+        if isinstance(res, list) and len(res) >= 90:
+            # Gate.io: [timestamp, volume, close, high, low, open]
+            df = pd.DataFrame(res, columns=["time", "volume", "close", "high", "low", "open"])
             df["time"] = df["time"].astype(int)
             df = df.sort_values(by="time").reset_index(drop=True)
             df["close"] = df["close"].astype(float)
@@ -43,11 +72,14 @@ def get_4h_data(coin):
     except Exception:
         pass
 
+    # ช่องทางสำรอง: KuCoin API
     try:
-        url = f"https://api.gateio.ws/api/v4/spot/candlesticks?currency_pair={coin}_USDT&interval=4h&limit=150"
+        url = f"https://api.kucoin.com/api/v1/market/candles?type=4hour&symbol={coin}-USDT"
         res = requests.get(url, timeout=5).json()
-        if isinstance(res, list) and len(res) >= 90:
-            df = pd.DataFrame(res, columns=["time", "volume", "close", "high", "low", "open"])
+        if res.get("code") == "200000" and res.get("data") and len(res["data"]) >= 90:
+            raw = res["data"]
+            # KuCoin: [time, open, close, high, low, volume, turnover]
+            df = pd.DataFrame(raw, columns=["time", "open", "close", "high", "low", "volume", "turnover"])
             df["time"] = df["time"].astype(int)
             df = df.sort_values(by="time").reset_index(drop=True)
             df["close"] = df["close"].astype(float)
@@ -59,48 +91,10 @@ def get_4h_data(coin):
 
     return None
 
-def get_top_20_coins_with_data():
-    """ดึงเหรียญ Top Market Cap และคัดเฉพาะเหรียญที่มีข้อมูลกราฟสมบูรณ์ครบ 20 ตัว"""
-    candidate_coins = []
-    
-    # 1. ดึงผู้ท้าชิงอันดับ 1-60 จาก CoinGecko
-    try:
-        url = "https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=60&page=1"
-        headers = {"User-Agent": "Mozilla/5.0"}
-        res = requests.get(url, headers=headers, timeout=10).json()
-        if isinstance(res, list) and len(res) > 0:
-            for item in res:
-                sym = item.get("symbol", "").upper()
-                if is_valid_crypto(sym):
-                    candidate_coins.append(sym)
-    except Exception:
-        pass
-
-    # รายชื่อมาตรฐานสำรองกรณีต่อ CoinGecko ไม่ติด
-    fallback_list = [
-        "BTC", "ETH", "SOL", "BNB", "XRP", "DOGE", "ADA", "TRX", "AVAX", "SUI",
-        "LINK", "NEAR", "DOT", "APT", "ICP", "LTC", "FET", "UNI", "TAO", "AAVE",
-        "RENDER", "SHIB", "PEPE", "BCH", "XLM", "ATOM", "ETC", "FIL", "ARB", "OP"
-    ]
-
-    for c in fallback_list:
-        if c not in candidate_coins and is_valid_crypto(c):
-            candidate_coins.append(c)
-
-    # 2. คัดเลือกเฉพาะเหรียญที่ดึงกราฟ 4H ได้สำเร็จจริง 20 อันดับแรก
-    valid_list = []
-    for coin in candidate_coins:
-        df = get_4h_data(coin)
-        if df is not None:
-            valid_list.append((coin, df))
-        if len(valid_list) == 20:
-            break
-        time.sleep(0.05)
-
-    return valid_list
-
+# ========================================================
+# 3. คำนวณเทคนิคอลตามระบบ A.Aun
+# ========================================================
 def check_setup(df):
-    """คำนวณ EMA 89 และ Ichimoku Cloud 4H"""
     df["ema89"] = df["close"].ewm(span=89, adjust=False).mean()
 
     # Ichimoku Cloud (9, 26, 52)
@@ -131,27 +125,39 @@ def send_telegram(message):
     payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
     requests.post(url, json=payload, timeout=10)
 
+# ========================================================
+# 4. ประมวลผลหลัก
+# ========================================================
 def main():
-    # ดึง Top 20 ตัวที่มีข้อมูลกราฟสมบูรณ์
-    valid_coins_data = get_top_20_coins_with_data()
+    # ดึงรายชื่อเหรียญตามอันดับ Market Cap แท้จริงจาก CoinGecko
+    candidates = get_coingecko_top_candidates()
 
     buy_list = []
     sell_list = []
     unknown_list = []
+    scanned_count = 0
 
-    for rank, (coin, df) in enumerate(valid_coins_data, start=1):
-        sym = f"{coin}USDT"
-        category, reason = check_setup(df)
-        item_text = f"• `#{rank:<2}` *{sym}* : {reason}"
+    # วนลูปดึงกราฟจาก Exchange ให้ครบ 20 ตัวที่มีข้อมูลสมบูรณ์
+    for coin in candidates:
+        df = get_4h_candles_from_exchange(coin)
+        if df is not None:
+            scanned_count += 1
+            sym = f"{coin}USDT"
+            category, reason = check_setup(df)
+            item_text = f"• `#{scanned_count:<2}` *{sym}* : {reason}"
 
-        if category == "BUY":
-            buy_list.append(item_text)
-        elif category == "SELL":
-            sell_list.append(item_text)
-        else:
-            unknown_list.append(item_text)
+            if category == "BUY":
+                buy_list.append(item_text)
+            elif category == "SELL":
+                sell_list.append(item_text)
+            else:
+                unknown_list.append(item_text)
 
-    # จัด Format ข้อความส่งออก
+        if scanned_count == 20:
+            break
+        time.sleep(0.05)
+
+    # จัดรูปแบบข้อความส่งออก
     report = ["📊 *4H (A.Aun Setup) - TOP 20*", "────────────────────────"]
 
     report.append(f"🟢 *BUY (LONG)* [{len(buy_list)}]")
