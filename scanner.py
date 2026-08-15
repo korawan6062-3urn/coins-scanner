@@ -7,7 +7,7 @@ import time
 TELEGRAM_TOKEN = "8903982584:AAF1EJ1OzjFpYzWJzAHeti8_xbQgVpYy8CU"
 TELEGRAM_CHAT_ID = "1376495243"
 
-# --- รายชื่อ Stablecoin และ Wrapped Token ที่ต้องละเว้น ---
+# --- ละเว้น Stablecoin และ Wrapped Token ---
 EXCLUDE_TOKENS = {
     "USDT", "USDC", "DAI", "FDUSD", "TUSD", "USDD", "USDE", "PYUSD",
     "BUSD", "EUR", "USD", "USTC", "FRAX", "LUSD", "WBTC", "WETH",
@@ -15,15 +15,15 @@ EXCLUDE_TOKENS = {
 }
 
 def get_top_20_coins():
-    """ดึง Top 20 เหรียญแบบ Real-time และกรอง Stablecoin ทิ้ง"""
-    # ช่องทางหลัก: CoinCap API (เรียงตาม Market Cap Rank สด)
+    """ดึง Top 20 Market Cap สดจาก CoinGecko หรือ CryptoCompare"""
+    # ช่องทางที่ 1: CoinGecko API
     try:
-        url = "https://api.coincap.io/v2/assets?limit=60"
+        url = "https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=45&page=1"
         headers = {"User-Agent": "Mozilla/5.0"}
         res = requests.get(url, headers=headers, timeout=10).json()
-        if "data" in res and res["data"]:
+        if isinstance(res, list) and len(res) > 0:
             top_coins = []
-            for item in res["data"]:
+            for item in res:
                 sym = item.get("symbol", "").upper()
                 if sym and sym not in EXCLUDE_TOKENS:
                     top_coins.append(sym)
@@ -32,38 +32,32 @@ def get_top_20_coins():
     except Exception:
         pass
 
-    # ช่องทางสำรอง: KuCoin API (เรียงตาม 24H Trading Volume)
+    # ช่องทางที่ 2: CryptoCompare API
     try:
-        url = "https://api.kucoin.com/api/v1/market/allTickers"
-        headers = {"User-Agent": "Mozilla/5.0"}
-        res = requests.get(url, headers=headers, timeout=10).json()
-        if res.get("code") == "200000" and res.get("data") and res["data"].get("ticker"):
-            tickers = res["data"]["ticker"]
-            usdt_tickers = []
-            for t in tickers:
-                sym = t.get("symbol", "")
-                if sym.endswith("-USDT"):
-                    coin = sym.replace("-USDT", "").upper()
-                    # กรองเหรียญ Leverage (3L, 3S) และ Stablecoin ออก
-                    if not any(coin.endswith(x) for x in ["3L", "3S", "2L", "2S", "UP", "DOWN"]) and coin not in EXCLUDE_TOKENS:
-                        vol_val = float(t.get("volValue", 0) or 0)
-                        usdt_tickers.append((coin, vol_val))
-            
-            usdt_tickers.sort(key=lambda x: x[1], reverse=True)
-            return [x[0] for x in usdt_tickers[:20]]
+        url = "https://min-api.cryptocompare.com/data/top/mktcapfull?limit=40&tsym=USD"
+        res = requests.get(url, timeout=10).json()
+        if "Data" in res and res["Data"]:
+            top_coins = []
+            for item in res["Data"]:
+                coin_info = item.get("CoinInfo", {})
+                sym = coin_info.get("Name", "").upper()
+                if sym and sym not in EXCLUDE_TOKENS:
+                    top_coins.append(sym)
+                if len(top_coins) == 20:
+                    return top_coins
     except Exception:
         pass
 
-    # รายชื่อสำรองกรณีฉุกเฉินต่อเน็ตภายนอกไม่ได้
+    # ช่องทางที่ 3: ลิสต์สำรองกรณีฉุกเฉิน
     return [
         "BTC", "ETH", "SOL", "BNB", "XRP",
         "DOGE", "ADA", "AVAX", "SUI", "LINK",
-        "NEAR", "DOT", "TRX", "PEPE", "SHIB",
-        "APT", "ICP", "LTC", "FET", "TIA"
+        "NEAR", "DOT", "TRX", "APT", "ICP",
+        "LTC", "FET", "UNI", "TAO", "AAVE"
     ]
 
 def get_4h_data(coin):
-    """ดึงแท่งเทียน 4H จาก KuCoin หรือ Gate.io"""
+    """ดึงกราฟ 4H จาก KuCoin หรือ Gate.io"""
     try:
         url = f"https://api.kucoin.com/api/v1/market/candles?type=4hour&symbol={coin}-USDT"
         res = requests.get(url, timeout=10).json()
@@ -122,14 +116,12 @@ def send_telegram(message):
     requests.post(url, json=payload, timeout=10)
 
 def main():
-    # 1. ดึง Top 20 สดอัตโนมัติ
     top_20_coins = get_top_20_coins()
 
     buy_list = []
     sell_list = []
     unknown_list = []
 
-    # 2. วนลูปสแกนแต่ละเหรียญตามลำดับอันดับ
     for rank, coin in enumerate(top_20_coins, start=1):
         sym = f"{coin}USDT"
         try:
