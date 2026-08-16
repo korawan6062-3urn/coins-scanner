@@ -79,13 +79,14 @@ def analyze_4h(df):
         return "UNKNOWN"
 
 def format_grid(coins, cols=3):
-    """จัดเรียงรายชื่อเหรียญเป็นแถวละ 3 ตัว เพื่อความสมมาตรและประหยัดพื้นที่"""
+    """จัดเรียงรายชื่อเหรียญเป็นแถวละ 3 ตัว ล็อกความกว้างช่องละ 11 ตัวอักษร"""
     if not coins:
         return "  • ไม่มี"
     rows = []
     for i in range(0, len(coins), cols):
         chunk = coins[i:i + cols]
-        row_str = "  " + "   ".join([f"`{c}`" for c in chunk])
+        # กำหนดความกว้าง 11 ช่องต่อ Cell (เช่น `BTCUSDT    `)
+        row_str = "  " + " ".join([f"`{c:<11}`" for c in chunk])
         rows.append(row_str)
     return "\n".join(rows)
 
@@ -141,7 +142,7 @@ def main():
     ]
 
     send_telegram("\n".join(msg))
-    print("4H Compact Summary Scanner executed successfully.")
+    print("4H Compact Grid Scanner executed successfully.")
 
 if __name__ == "__main__":
     main()
