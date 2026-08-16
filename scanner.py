@@ -67,16 +67,27 @@ def analyze_4h(df):
         bot_kumo = min(span_a.iloc[-1], span_b.iloc[-1])
 
         if pd.isna(top_kumo) or pd.isna(bot_kumo):
-            return "UNKNOWN", "ไม่พบข้อมูลเมฆ"
+            return "UNKNOWN"
 
         if last_close > top_kumo:
-            return "BUY", "เหนือเมฆ"
+            return "BUY"
         elif last_close < bot_kumo:
-            return "SELL", "ใต้เมฆ"
+            return "SELL"
         else:
-            return "UNKNOWN", "ในเนื้อเมฆ"
+            return "UNKNOWN"
     except Exception:
-        return "UNKNOWN", "คำนวณผิดพลาด"
+        return "UNKNOWN"
+
+def format_grid(coins, cols=3):
+    """จัดเรียงรายชื่อเหรียญเป็นแถวละ 3 ตัว เพื่อความสมมาตรและประหยัดพื้นที่"""
+    if not coins:
+        return "  • ไม่มี"
+    rows = []
+    for i in range(0, len(coins), cols):
+        chunk = coins[i:i + cols]
+        row_str = "  " + "   ".join([f"`{c}`" for c in chunk])
+        rows.append(row_str)
+    return "\n".join(rows)
 
 def send_telegram(message):
     """ส่งข้อความเข้า Telegram"""
@@ -100,40 +111,37 @@ def main():
         sym = f"{coin}USDT"
         
         if df is None:
-            unknown_list.append(f"• `{sym}` : ดึงข้อมูลไม่ได้")
+            unknown_list.append(sym)
             continue
 
-        status, detail = analyze_4h(df)
+        status = analyze_4h(df)
 
         if status == "BUY":
-            buy_list.append(f"• `{sym}` : {detail}")
+            buy_list.append(sym)
         elif status == "SELL":
-            sell_list.append(f"• `{sym}` : {detail}")
+            sell_list.append(sym)
         else:
-            unknown_list.append(f"• `{sym}` : {detail}")
+            unknown_list.append(sym)
 
         time.sleep(0.04)
 
     msg = [
         "📊 *สรุปภาพรวมเหรียญ TF 4H (Pure Cloud)*",
         "────────────────────────",
-        f"🟢 *BUY (LONG) {len(buy_list)}*",
-        "\n".join(buy_list) if buy_list else "• ไม่มี",
+        f"🟢 *BUY (เหนือเมฆ) [{len(buy_list)}]*",
+        format_grid(buy_list, cols=3),
         "",
-        f"🔴 *SELL (SHORT) {len(sell_list)}*",
-        "\n".join(sell_list) if sell_list else "• ไม่มี",
+        f"🔴 *SELL (ใต้เมฆ) [{len(sell_list)}]*",
+        format_grid(sell_list, cols=3),
         "",
-        f"⚪️ *UNKNOWN (NO TRADE) {len(unknown_list)}*",
-        "\n".join(unknown_list) if unknown_list else "• ไม่มี",
+        f"⚪️ *UNKNOWN (ในเมฆ) [{len(unknown_list)}]*",
+        format_grid(unknown_list, cols=3),
         "────────────────────────",
-        "📌 *แนวทางหน้างาน:*",
-        "• โฟกัสเฉพาะกลุ่ม 🟢 หรือ 🔴 (⚪️ ข้ามเด็ดขาด)",
-        "• รอแจ้งเตือนรอบคลื่นจากบอท 15M ก่อนเปิดดูกราฟ",
-        "• สังเกตระยะห่างของเส้น EMA 89 หน้างานด้วยสายตาตัวเอง"
+        "📌 *แนวทาง:* รอแจ้งเตือนรอบคลื่นจากบอท 15M แล้วสังเกตระยะห่าง EMA 89 หน้างาน"
     ]
 
     send_telegram("\n".join(msg))
-    print("4H Summary Scanner executed successfully.")
+    print("4H Compact Summary Scanner executed successfully.")
 
 if __name__ == "__main__":
     main()
