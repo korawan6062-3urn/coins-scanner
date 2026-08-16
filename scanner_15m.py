@@ -51,8 +51,8 @@ def get_candles(coin, interval="4h", limit=120):
 
     return None
 
-def detect_macd_divergence(df, lookback=60, pivot_period=2):
-    """ตรวจจับ 4H/15M Divergence ความไวสูง (Custom MACD 12, 26, SMA 9)"""
+def detect_macd_divergence(df, lookback=100):
+    """ตรวจจับ Macro Divergence ทั้งใน 4H และ 15M"""
     try:
         fast_ema = df["close"].ewm(span=12, adjust=False).mean()
         slow_ema = df["close"].ewm(span=26, adjust=False).mean()
@@ -64,40 +64,34 @@ def detect_macd_divergence(df, lookback=60, pivot_period=2):
         lows = sub_df["low"].values
         n = len(sub_df)
 
-        ph_idx = []
-        pl_idx = []
+        if n < 40:
+            return "NONE"
 
-        for i in range(pivot_period, n - pivot_period):
-            if highs[i] == max(highs[i - pivot_period:i + pivot_period + 1]):
-                ph_idx.append(i)
-            if lows[i] == min(lows[i - pivot_period:i + pivot_period + 1]):
-                pl_idx.append(i)
+        # Bullish Divergence
+        curr_price = lows[-1]
+        curr_macd = sub_macd[-1]
 
-        # 1. เช็ก Bullish Divergence (ราคาทำ Low ต่ำลง แต่ MACD ยกตัวขึ้น)
-        if len(pl_idx) >= 2:
-            p1, p2 = pl_idx[-2], pl_idx[-1]
-            if (n - 1 - p2) <= 8:
-                if lows[p2] < lows[p1] and sub_macd[p2] > sub_macd[p1]:
-                    return "BULL_DIV"
+        past_window_macd = sub_macd[max(0, n - 80): n - 10]
+        past_window_lows = lows[max(0, n - 80): n - 10]
 
-        if len(pl_idx) >= 1:
-            p_last = pl_idx[-1]
-            if (n - 1 - p_last) >= 3:
-                if lows[-1] < lows[p_last] and sub_macd[-1] > sub_macd[p_last]:
-                    return "BULL_DIV"
+        if len(past_window_macd) > 0:
+            min_past_macd = np.min(past_window_macd)
+            idx_min_macd = np.argmin(past_window_macd)
+            price_at_min_macd = past_window_lows[idx_min_macd]
 
-        # 2. เช็ก Bearish Divergence (ราคาทำ High สูงขึ้น แต่ MACD อ่อนแรง)
-        if len(ph_idx) >= 2:
-            p1, p2 = ph_idx[-2], ph_idx[-1]
-            if (n - 1 - p2) <= 8:
-                if highs[p2] > highs[p1] and sub_macd[p2] < sub_macd[p1]:
-                    return "BEAR_DIV"
+            if curr_price <= price_at_min_macd and curr_macd > (min_past_macd * 0.75) and min_past_macd < 0:
+                return "BULL_DIV"
 
-        if len(ph_idx) >= 1:
-            p_last = ph_idx[-1]
-            if (n - 1 - p_last) >= 3:
-                if highs[-1] > highs[p_last] and sub_macd[-1] < sub_macd[p_last]:
-                    return "BEAR_DIV"
+        # Bearish Divergence
+        past_window_highs = highs[max(0, n - 80): n - 10]
+
+        if len(past_window_macd) > 0:
+            max_past_macd = np.max(past_window_macd)
+            idx_max_macd = np.argmax(past_window_macd)
+            price_at_max_macd = past_window_highs[idx_max_macd]
+
+            if curr_price >= price_at_max_macd and curr_macd < (max_past_macd * 0.75) and max_past_macd > 0:
+                return "BEAR_DIV"
 
     except Exception:
         pass
@@ -105,7 +99,7 @@ def detect_macd_divergence(df, lookback=60, pivot_period=2):
     return "NONE"
 
 def check_4h_trend(df_4h):
-    """เช็กทิศทางหลัก 4H"""
+    """ตรวจทิศทางหลัก 4H (ต้องพ้นเมฆ และยืนเหนือ/ใต้ EMA89)"""
     ema89 = df_4h["close"].ewm(span=89, adjust=False).mean()
     tenkan = (df_4h["high"].rolling(9).max() + df_4h["low"].rolling(9).min()) / 2
     kijun = (df_4h["high"].rolling(26).max() + df_4h["low"].rolling(26).min()) / 2
@@ -124,7 +118,7 @@ def check_4h_trend(df_4h):
     return "NONE"
 
 def check_15m_trigger(df_15m, trend_4h):
-    """เช็กจังหวะจบย่อ 15M (เพิ่งข้ามเส้น EMA/Cloud + MACD ตัดแท่งล่าสุด)"""
+    """ตรวจจังหวะจบย่อ 15M (เพิ่งตัด Golden/Death Cross สดๆ)"""
     df_15m["ema89"] = df_15m["close"].ewm(span=89, adjust=False).mean()
     tenkan = (df_15m["high"].rolling(9).max() + df_15m["low"].rolling(9).min()) / 2
     kijun = (df_15m["high"].rolling(26).max() + df_15m["low"].rolling(26).min()) / 2
@@ -162,7 +156,8 @@ def main():
     triggers = []
 
     for coin in WATCHLIST:
-        df_4h = get_candles(coin, interval="4h", limit=90)
+        # 1. เช็ก 4H ด่านแรก
+        df_4h = get_candles(coin, interval="4h", limit=120)
         if df_4h is None:
             continue
 
@@ -170,7 +165,8 @@ def main():
         if trend_4h == "NONE":
             continue
 
-        df_15m = get_candles(coin, interval="15m", limit=90)
+        # 2. เช็ก 15M ด่านสอง
+        df_15m = get_candles(coin, interval="15m", limit=120)
         if df_15m is None:
             continue
 
@@ -178,6 +174,7 @@ def main():
         if signal == "NONE":
             continue
 
+        # 3. ตรวจสอบ Divergence ทั้ง 4H และ 15M
         div_4h = detect_macd_divergence(df_4h)
         div_15m = detect_macd_divergence(df_15m)
         sym = f"{coin}USDT"
