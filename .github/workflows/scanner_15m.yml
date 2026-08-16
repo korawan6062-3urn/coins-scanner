@@ -1,9 +1,10 @@
-name: 15M Trigger Scanner
+name: 15M Trigger Scanner (Active Day Session)
 
 on:
   schedule:
-    # รันอัตโนมัติทุก 15 นาที
-    - cron: '*/15 * * * *'
+    # รันทุก 15 นาที (นาทีที่ 02, 17, 32, 47) 
+    # ตั้งแต่ 07:02 - 00:47 น. เวลาไทย (00:00 - 17:00 UTC)
+    - cron: '2,17,32,47 0-17 * * *'
   workflow_dispatch:
 
 jobs:
