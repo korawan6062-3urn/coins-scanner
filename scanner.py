@@ -18,7 +18,7 @@ WATCHLIST = sorted([
 ])
 
 def get_4h_candles(coin):
-    """ดึงข้อมูลกราฟ 4H จาก Gate.io หรือ KuCoin (ดึง 150 แท่งเพื่อความแม่นยำ)"""
+    """ดึงข้อมูลกราฟ 4H จาก Gate.io หรือ KuCoin (150 แท่งเพื่อความแม่นยำของอินดิเคเตอร์)"""
     try:
         url = f"https://api.gateio.ws/api/v4/spot/candlesticks?currency_pair={coin}_USDT&interval=4h&limit=150"
         res = requests.get(url, timeout=5).json()
@@ -26,9 +26,8 @@ def get_4h_candles(coin):
             df = pd.DataFrame(res, columns=["time", "volume", "close", "high", "low", "open"])
             df["time"] = df["time"].astype(int)
             df = df.sort_values(by="time").reset_index(drop=True)
-            df["close"] = df["close"].astype(float)
-            df["high"] = df["high"].astype(float)
-            df["low"] = df["low"].astype(float)
+            for col in ["close", "high", "low", "open"]:
+                df[col] = df[col].astype(float)
             return df
     except Exception:
         pass
@@ -41,20 +40,17 @@ def get_4h_candles(coin):
             df = pd.DataFrame(raw, columns=["time", "open", "close", "high", "low", "volume", "turnover"])
             df["time"] = df["time"].astype(int)
             df = df.sort_values(by="time").reset_index(drop=True)
-            df["close"] = df["close"].astype(float)
-            df["high"] = df["high"].astype(float)
-            df["low"] = df["low"].astype(float)
+            for col in ["close", "high", "low", "open"]:
+                df[col] = df[col].astype(float)
             return df
     except Exception:
         pass
 
     return None
 
-def detect_macd_divergence(df, lookback=100):
+def detect_macd_divergence(df, lookback=90):
     """
-    ตรวจจับ Divergence แบบ Dual-Mode:
-    1. Micro Divergence (คลื่นสั้น 4-15 แท่งล่าสุด เช่น ADA)
-    2. Macro Divergence (คลื่นยาว 15-80 แท่ง เช่น ONDO)
+    ตรวจจับ Divergence แบบ Dual-Mode (ครอบคลุมทั้ง Micro ปลายคลื่นแบบ ADA และ Macro แบบ ONDO)
     """
     try:
         fast_ema = df["close"].ewm(span=12, adjust=False).mean()
@@ -67,58 +63,57 @@ def detect_macd_divergence(df, lookback=100):
         lows = sub_df["low"].values
         n = len(sub_df)
 
-        if n < 20:
+        if n < 30:
             return ""
 
-        curr_price = lows[-1]
+        curr_price_low = lows[-1]
+        curr_price_high = highs[-1]
         curr_macd = sub_macd[-1]
 
         # ----------------------------------------------------
-        # 1. เช็ก Bullish Divergence (สำหรับเตือนฝั่ง SELL)
+        # 1. Bullish Divergence (สำหรับเตือนฝั่ง SELL)
         # ----------------------------------------------------
-        # โหมดที่ 1: Micro Bull Div (ก้นย่อย 4-15 แท่งล่าสุดแบบ ADA)
-        micro_macd_win = sub_macd[n-15: n-3]
-        micro_lows_win = lows[n-15: n-3]
-        if len(micro_macd_win) > 0:
-            min_micro_macd = np.min(micro_macd_win)
-            idx_micro = np.argmin(micro_macd_win)
-            price_micro = micro_lows_win[idx_micro]
-
-            if curr_price <= price_micro and curr_macd > min_micro_macd and curr_macd < 0:
+        # โหมด 1: Micro Bull Div (ก้นย่อย 4-15 แท่งล่าสุด เช่น ADA)
+        micro_macd_lows = sub_macd[n-15: n-3]
+        micro_lows = lows[n-15: n-3]
+        if len(micro_macd_lows) > 0:
+            min_m_macd = np.min(micro_macd_lows)
+            idx_m = np.argmin(micro_macd_lows)
+            p_m = micro_lows[idx_m]
+            if curr_price_low <= p_m and curr_macd > min_m_macd and curr_macd < 0:
                 return " 🔥 Bull Div"
 
-        # โหมดที่ 2: Macro Bull Div (ก้นคลื่นใหญ่ 15-80 แท่งแบบ ONDO)
-        macro_macd_win = sub_macd[max(0, n-80): n-15]
-        macro_lows_win = lows[max(0, n-80): n-15]
-        if len(macro_macd_win) > 0:
-            min_macro_macd = np.min(macro_macd_win)
-            idx_macro = np.argmin(macro_macd_win)
-            price_macro = macro_lows_win[idx_macro]
-
-            if curr_price <= price_macro and curr_macd > (min_macro_macd * 0.75) and min_macro_macd < 0:
+        # โหมด 2: Macro Bull Div (ก้นคลื่นใหญ่ 15-80 แท่ง เช่น ONDO)
+        macro_macd_lows = sub_macd[max(0, n-80): n-15]
+        macro_lows = lows[max(0, n-80): n-15]
+        if len(macro_macd_lows) > 0:
+            min_mac_macd = np.min(macro_macd_lows)
+            idx_mac = np.argmin(macro_macd_lows)
+            p_mac = macro_lows[idx_mac]
+            if curr_price_low <= p_mac and curr_macd > (min_mac_macd * 0.75) and min_mac_macd < 0:
                 return " 🔥 Bull Div"
 
         # ----------------------------------------------------
-        # 2. เช็ก Bearish Divergence (สำหรับเตือนฝั่ง BUY)
+        # 2. Bearish Divergence (สำหรับเตือนฝั่ง BUY)
         # ----------------------------------------------------
-        # โหมดที่ 1: Micro Bear Div
-        micro_highs_win = highs[n-15: n-3]
-        if len(micro_macd_win) > 0:
-            max_micro_macd = np.max(micro_macd_win)
-            idx_micro_h = np.argmax(micro_macd_win)
-            price_micro_h = micro_highs_win[idx_micro_h]
-
-            if curr_price >= price_micro_h and curr_macd < max_micro_macd and curr_macd > 0:
+        # โหมด 1: Micro Bear Div
+        micro_macd_highs = sub_macd[n-15: n-3]
+        micro_highs = highs[n-15: n-3]
+        if len(micro_macd_highs) > 0:
+            max_m_macd = np.max(micro_macd_highs)
+            idx_m_h = np.argmax(micro_macd_highs)
+            p_m_h = micro_highs[idx_m_h]
+            if curr_price_high >= p_m_h and curr_macd < max_m_macd and curr_macd > 0:
                 return " ⚠️ Bear Div"
 
-        # โหมดที่ 2: Macro Bear Div
-        macro_highs_win = highs[max(0, n-80): n-15]
-        if len(macro_macd_win) > 0:
-            max_macro_macd = np.max(macro_macd_win)
-            idx_macro_h = np.argmax(macro_macd_win)
-            price_macro_h = macro_highs_win[idx_macro_h]
-
-            if curr_price >= price_macro_h and curr_macd < (max_macro_macd * 0.75) and max_macro_macd > 0:
+        # โหมด 2: Macro Bear Div
+        macro_macd_highs = sub_macd[max(0, n-80): n-15]
+        macro_highs = highs[max(0, n-80): n-15]
+        if len(macro_macd_highs) > 0:
+            max_mac_macd = np.max(macro_macd_highs)
+            idx_mac_h = np.argmax(macro_macd_highs)
+            p_mac_h = macro_highs[idx_mac_h]
+            if curr_price_high >= p_mac_h and curr_macd < (max_mac_macd * 0.75) and max_mac_macd > 0:
                 return " ⚠️ Bear Div"
 
     except Exception:
@@ -127,10 +122,10 @@ def detect_macd_divergence(df, lookback=100):
     return ""
 
 def check_setup(df):
-    """คำนวณแยกสถานะ Ichimoku Cloud + EMA89 และตรวจ Divergence ตามสูตร A.Aun"""
+    """คำนวณแยกสถานะ Ichimoku Cloud (9,26,52) + EMA89 และตรวจ Divergence ตามสูตร A.Aun"""
     df["ema89"] = df["close"].ewm(span=89, adjust=False).mean()
 
-    # Ichimoku Cloud (9, 26, 52)
+    # Ichimoku Cloud
     tenkan = (df["high"].rolling(9).max() + df["low"].rolling(9).min()) / 2
     kijun = (df["high"].rolling(26).max() + df["low"].rolling(26).min()) / 2
     span_a = (tenkan + kijun) / 2
@@ -144,7 +139,7 @@ def check_setup(df):
     top_kumo = max(kumo_a.iloc[-1], kumo_b.iloc[-1])
     bot_kumo = min(kumo_a.iloc[-1], kumo_b.iloc[-1])
 
-    # 1. สถานะ Ichimoku
+    # 1. เช็กสถานะเมฆ
     if last_close > top_kumo:
         ichi_status = "เหนือเมฆ"
     elif last_close < bot_kumo:
@@ -152,7 +147,7 @@ def check_setup(df):
     else:
         ichi_status = "ในเนื้อเมฆ"
 
-    # 2. สถานะ EMA 89
+    # 2. เช็กสถานะ EMA 89
     ema_status = "เหนือ EMA89" if last_close >= last_ema89 else "ใต้ EMA89"
 
     # 3. จัดหมวดหมู่ Action หลัก
