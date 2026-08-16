@@ -1,3 +1,5 @@
+import sys
+import os
 import requests
 import pandas as pd
 import numpy as np
@@ -8,7 +10,7 @@ import traceback
 TELEGRAM_TOKEN = "8903982584:AAF1EJ1OzjFpYzWJzAHeti8_xbQgVpYy8CU"
 TELEGRAM_CHAT_ID = "1376495243"
 
-# --- 2. Top 31 Curated Watchlist เรียง A -> Z ---
+# --- 2. Top 31 Watchlist เรียง A -> Z ---
 WATCHLIST = sorted([
     "AAVE", "ADA", "APT", "AVAX", "BCH",
     "BNB", "BTC", "DOT", "ENA", "ETH",
@@ -19,7 +21,7 @@ WATCHLIST = sorted([
 ])
 
 def get_4h_candles(coin):
-    """ดึงข้อมูลกราฟ 4H จาก Gate.io หรือ KuCoin พร้อมระบบป้องกันแครช"""
+    """ดึงข้อมูลกราฟ 4H จาก Gate.io หรือ KuCoin พร้อมระบบแปลงค่ากันแครช"""
     try:
         url = f"https://api.gateio.ws/api/v4/spot/candlesticks?currency_pair={coin}_USDT&interval=4h&limit=150"
         res = requests.get(url, timeout=7).json()
@@ -32,8 +34,8 @@ def get_4h_candles(coin):
             df = df.dropna().reset_index(drop=True)
             if len(df) >= 60:
                 return df
-    except Exception as e:
-        print(f"Gate.io fetch error for {coin}: {e}")
+    except Exception:
+        pass
 
     try:
         url = f"https://api.kucoin.com/api/v1/market/candles?type=4hour&symbol={coin}-USDT"
@@ -49,76 +51,13 @@ def get_4h_candles(coin):
                 df = df.dropna().reset_index(drop=True)
                 if len(df) >= 60:
                     return df
-    except Exception as e:
-        print(f"KuCoin fetch error for {coin}: {e}")
+    except Exception:
+        pass
 
     return None
 
-def detect_macd_divergence(df, lookback=90):
-    """ตรวจจับ Dual-Mode Divergence (Micro ปลายคลื่น ADA + Macro คลื่นยาว ONDO)"""
-    try:
-        fast_ema = df["close"].ewm(span=12, adjust=False).mean()
-        slow_ema = df["close"].ewm(span=26, adjust=False).mean()
-        macd = fast_ema - slow_ema
-
-        sub_df = df.tail(lookback).copy().reset_index(drop=True)
-        sub_macd = macd.tail(lookback).values
-        highs = sub_df["high"].values
-        lows = sub_df["low"].values
-        n = len(sub_df)
-
-        if n < 25:
-            return ""
-
-        curr_price_low = lows[-1]
-        curr_price_high = highs[-1]
-        curr_macd = sub_macd[-1]
-
-        # 1. Bullish Divergence (สำหรับเตือนฝั่ง SELL)
-        micro_macd_lows = sub_macd[max(0, n-15): max(0, n-3)]
-        micro_lows = lows[max(0, n-15): max(0, n-3)]
-        if len(micro_macd_lows) > 0:
-            min_m_macd = np.min(micro_macd_lows)
-            idx_m = np.argmin(micro_macd_lows)
-            p_m = micro_lows[idx_m]
-            if curr_price_low <= p_m and curr_macd > min_m_macd and curr_macd < 0:
-                return " 🔥 Bull Div"
-
-        macro_macd_lows = sub_macd[max(0, n-80): max(0, n-15)]
-        macro_lows = lows[max(0, n-80): max(0, n-15)]
-        if len(macro_macd_lows) > 0:
-            min_mac_macd = np.min(macro_macd_lows)
-            idx_mac = np.argmin(macro_macd_lows)
-            p_mac = macro_lows[idx_mac]
-            if curr_price_low <= p_mac and curr_macd > (min_mac_macd * 0.75) and min_mac_macd < 0:
-                return " 🔥 Bull Div"
-
-        # 2. Bearish Divergence (สำหรับเตือนฝั่ง BUY)
-        micro_macd_highs = sub_macd[max(0, n-15): max(0, n-3)]
-        micro_highs = highs[max(0, n-15): max(0, n-3)]
-        if len(micro_macd_highs) > 0:
-            max_m_macd = np.max(micro_macd_highs)
-            idx_m_h = np.argmax(micro_macd_highs)
-            p_m_h = micro_highs[idx_m_h]
-            if curr_price_high >= p_m_h and curr_macd < max_m_macd and curr_macd > 0:
-                return " ⚠️ Bear Div"
-
-        macro_macd_highs = sub_macd[max(0, n-80): max(0, n-15)]
-        macro_highs = highs[max(0, n-80): max(0, n-15)]
-        if len(macro_macd_highs) > 0:
-            max_mac_macd = np.max(macro_macd_highs)
-            idx_mac_h = np.argmax(macro_macd_highs)
-            p_mac_h = macro_highs[idx_mac_h]
-            if curr_price_high >= p_mac_h and curr_macd < (max_mac_macd * 0.75) and max_mac_macd > 0:
-                return " ⚠️ Bear Div"
-
-    except Exception as e:
-        print(f"Div calculation error: {e}")
-
-    return ""
-
 def check_setup(df):
-    """คำนวณแยกสถานะ Ichimoku Cloud + EMA89 ตามสูตร A.Aun"""
+    """คำนวณแยกสถานะ Ichimoku Cloud (9,26,52) + EMA89 ตามสูตร A.Aun"""
     try:
         df["ema89"] = df["close"].ewm(span=89, adjust=False).mean()
 
@@ -139,6 +78,7 @@ def check_setup(df):
             top_kumo = last_ema89
             bot_kumo = last_ema89
 
+        # เช็กสถานะเมฆ
         if last_close > top_kumo:
             ichi_status = "เหนือเมฆ"
         elif last_close < bot_kumo:
@@ -146,8 +86,10 @@ def check_setup(df):
         else:
             ichi_status = "ในเนื้อเมฆ"
 
+        # เช็กสถานะ EMA89
         ema_status = "เหนือ EMA89" if last_close >= last_ema89 else "ใต้ EMA89"
 
+        # จัดหมวดหมู่หลัก
         if ichi_status == "เหนือเมฆ" and ema_status == "เหนือ EMA89":
             category = "BUY"
         elif ichi_status == "ใต้เมฆ" and ema_status == "ใต้ EMA89":
@@ -155,20 +97,17 @@ def check_setup(df):
         else:
             category = "UNKNOWN"
 
-        div_tag = detect_macd_divergence(df)
-        return category, ichi_status, ema_status, div_tag
-    except Exception as e:
-        print(f"Check setup error: {e}")
-        return "UNKNOWN", "ดึงข้อมูลล้มเหลว", "ไม่ระบุ", ""
+        return category, ichi_status, ema_status
+    except Exception:
+        return "UNKNOWN", "ดึงข้อมูลล้มเหลว", "ไม่ระบุ"
 
 def send_telegram(message):
-    """ส่งข้อความเข้า Telegram ปลอดภัย 100% ไม่ให้แครช"""
+    """ส่งข้อความเข้า Telegram ปลอดภัย 100%"""
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
         payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
         res = requests.post(url, json=payload, timeout=10)
         if res.status_code != 200:
-            # Fallback ส่งแบบข้อความธรรมดาหากติด Markdown syntax
             payload_plain = {"chat_id": TELEGRAM_CHAT_ID, "text": message.replace("*", "").replace("`", "")}
             requests.post(url, json=payload_plain, timeout=10)
     except Exception as e:
@@ -184,8 +123,8 @@ def main():
             sym = f"{coin}USDT"
             df = get_4h_candles(coin)
             if df is not None:
-                category, ichi_status, ema_status, div_tag = check_setup(df)
-                item_text = f"• `{sym:<10}:` {ichi_status} | {ema_status}{div_tag}"
+                category, ichi_status, ema_status = check_setup(df)
+                item_text = f"• `{sym:<10}:` {ichi_status} | {ema_status}"
 
                 if category == "BUY":
                     buy_list.append(item_text)
@@ -201,36 +140,42 @@ def main():
 
         report = ["📊 *4H (A.Aun Setup) - Watchlist*", "────────────────────────"]
 
-        report.append(f"🟢 *BUY (LONG)* {len(buy_list)}")
+        report.append(f"🟢 *BUY (LONG)* [{len(buy_list)}]")
         if buy_list:
             report.extend(buy_list)
         else:
-            report.append("• ไม่มีเหรียญที่ตรงเงื่อนไข")
+            report.append("• _ไม่มีเหรียญที่ตรงเงื่อนไข_")
         report.append("")
 
-        report.append(f"🔴 *SELL (SHORT)* {len(sell_list)}")
+        report.append(f"🔴 *SELL (SHORT)* [{len(sell_list)}]")
         if sell_list:
             report.extend(sell_list)
         else:
-            report.append("• ไม่มีเหรียญที่ตรงเงื่อนไข")
+            report.append("• _ไม่มีเหรียญที่ตรงเงื่อนไข_")
         report.append("")
 
-        report.append(f"⚪ *UNKNOWN (NO TRADE)* {len(unknown_list)}")
+        report.append(f"⚪ *UNKNOWN (NO TRADE)* [{len(unknown_list)}]")
         if unknown_list:
             report.extend(unknown_list)
         else:
-            report.append("• ไม่มีเหรียญ")
+            report.append("• _ไม่มีเหรียญ_")
 
         report.append("────────────────────────")
-        report.append("💡 *Action:* เลือกเฉพาะกลุ่ม 🟢 หรือ 🔴 ไปเปิดดู 15M/5M รอย่อ Retest")
+        report.append("📌 *กฎเหล็ก 4H (A.Aun Mindset):*")
+        report.append("• โฟกัสเฉพาะกลุ่ม 🟢 หรือ 🔴 เท่านั้น (⚪ ข้ามเด็ดขาด)")
+        report.append("• ห้ามเปิดออเดอร์ทันทีใน 4H ให้รอบอท 15M แจ้งเตือนจุดพักตัว")
+        report.append("• คัดเลือกเหรียญที่โครงสร้างกราฟสวยและเคลียร์ที่สุด 1–2 ตัว")
 
         final_message = "\n".join(report)
         send_telegram(final_message)
         print("4H Scanner executed successfully.")
 
     except Exception as e:
-        print(f"Fatal error in main: {e}")
+        print(f"Fatal error in 4H main: {e}")
         traceback.print_exc()
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    finally:
+        sys.exit(0)
