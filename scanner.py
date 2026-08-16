@@ -3,11 +3,11 @@ import pandas as pd
 import numpy as np
 import time
 
-# --- ข้อมูลการแจ้งเตือน Telegram ---
+# --- 1. ข้อมูลการแจ้งเตือน Telegram ---
 TELEGRAM_TOKEN = "8903982584:AAF1EJ1OzjFpYzWJzAHeti8_xbQgVpYy8CU"
 TELEGRAM_CHAT_ID = "1376495243"
 
-# --- Watchlist คุณภาพสูง 31 ตัว (รวมทองคำ PAXG) เรียง A -> Z ---
+# --- 2. Watchlist 31 ตัว (รวมทองคำ PAXG) เรียง A -> Z ---
 WATCHLIST = sorted([
     "AAVE", "ADA", "APT", "AVAX", "BCH",
     "BNB", "BTC", "DOT", "ENA", "ETH",
@@ -18,7 +18,7 @@ WATCHLIST = sorted([
 ])
 
 def get_4h_candles(coin):
-    """ดึงข้อมูลกราฟ 4H จาก Gate.io (หลัก) หรือ KuCoin (สำรอง)"""
+    """ดึงข้อมูลกราฟ 4H จาก Gate.io หรือ KuCoin"""
     try:
         url = f"https://api.gateio.ws/api/v4/spot/candlesticks?currency_pair={coin}_USDT&interval=4h&limit=150"
         res = requests.get(url, timeout=5).json()
@@ -50,8 +50,8 @@ def get_4h_candles(coin):
 
     return None
 
-def detect_macd_divergence(df, lookback=35, pivot_period=4):
-    """ตรวจจับ 4H Regular Divergence ด้วย Custom MACD (12, 26, SMA 9)"""
+def detect_macd_divergence(df, lookback=50):
+    """ตรวจจับ Divergence 4H ครอบคลุมทั้งก้นคลื่น Swing และ Live Bar"""
     try:
         fast_ema = df["close"].ewm(span=12, adjust=False).mean()
         slow_ema = df["close"].ewm(span=26, adjust=False).mean()
@@ -63,35 +63,38 @@ def detect_macd_divergence(df, lookback=35, pivot_period=4):
         lows = sub_df["low"].values
         n = len(sub_df)
 
-        ph_idx = []
-        pl_idx = []
+        pl_idx = [i for i in range(2, n - 2) if lows[i] == min(lows[i-2:i+3])]
+        ph_idx = [i for i in range(2, n - 2) if highs[i] == max(highs[i-2:i+3])]
 
-        for i in range(pivot_period, n - pivot_period):
-            if highs[i] == max(highs[i - pivot_period:i + pivot_period + 1]):
-                ph_idx.append(i)
-            if lows[i] == min(lows[i - pivot_period:i + pivot_period + 1]):
-                pl_idx.append(i)
-
-        # Bearish Divergence
-        if len(ph_idx) >= 2:
-            p1, p2 = ph_idx[-2], ph_idx[-1]
-            if (n - 1 - p2) <= 6:
-                if highs[p2] > highs[p1] and sub_macd[p2] < sub_macd[p1]:
-                    return " [⚠️ Bear Div]"
-
-        # Bullish Divergence
+        # 1. Bullish Divergence (สำหรับเตือนฝั่ง SELL)
         if len(pl_idx) >= 2:
             p1, p2 = pl_idx[-2], pl_idx[-1]
-            if (n - 1 - p2) <= 6:
-                if lows[p2] < lows[p1] and sub_macd[p2] > sub_macd[p1]:
-                    return " [🔥 Bull Div]"
+            if (n - 1 - p2) <= 8 and lows[p2] < lows[p1] and sub_macd[p2] > sub_macd[p1]:
+                return " 🔥 Bull Div"
+
+        if len(pl_idx) >= 1:
+            p_last = pl_idx[-1]
+            if (n - 1 - p_last) >= 2 and lows[-1] < lows[p_last] and sub_macd[-1] > sub_macd[p_last]:
+                return " 🔥 Bull Div"
+
+        # 2. Bearish Divergence (สำหรับเตือนฝั่ง BUY)
+        if len(ph_idx) >= 2:
+            p1, p2 = ph_idx[-2], ph_idx[-1]
+            if (n - 1 - p2) <= 8 and highs[p2] > highs[p1] and sub_macd[p2] < sub_macd[p1]:
+                return " ⚠️ Bear Div"
+
+        if len(ph_idx) >= 1:
+            p_last = ph_idx[-1]
+            if (n - 1 - p_last) >= 2 and highs[-1] > highs[p_last] and sub_macd[-1] < sub_macd[p_last]:
+                return " ⚠️ Bear Div"
+
     except Exception:
         pass
 
     return ""
 
 def check_setup(df):
-    """คำนวณแยกสถานะ Ichimoku Cloud + EMA89 และตรวจ Divergence"""
+    """คำนวณแยกสถานะ Ichimoku Cloud + EMA89 และตรวจ Divergence ตามสูตร A.Aun"""
     df["ema89"] = df["close"].ewm(span=89, adjust=False).mean()
 
     # Ichimoku Cloud (9, 26, 52)
@@ -119,7 +122,7 @@ def check_setup(df):
     # 2. สถานะ EMA 89
     ema_status = "เหนือ EMA89" if last_close >= last_ema89 else "ใต้ EMA89"
 
-    # 3. จัดหมวดหมู่ Action
+    # 3. จัดหมวดหมู่ Action หลัก
     if ichi_status == "เหนือเมฆ" and ema_status == "เหนือ EMA89":
         category = "BUY"
     elif ichi_status == "ใต้เมฆ" and ema_status == "ใต้ EMA89":
@@ -159,7 +162,7 @@ def main():
 
         time.sleep(0.04)
 
-    # จัดรูปแบบข้อความส่งออก
+    # รวมผลสรุปรายงานแยก 3 หมวดหมู่ชัดเจน
     report = ["📊 *4H (A.Aun Setup) - Watchlist*", "────────────────────────"]
 
     report.append(f"🟢 *BUY (LONG)* [{len(buy_list)}]")
