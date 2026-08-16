@@ -1,13 +1,13 @@
-name: 4H Watchlist Scanner
+name: 4H Summary Scanner
 
 on:
   schedule:
-    # 08:02 UTC = 15:02 น. เวลาไทย (รันทุกรอบปิดแท่ง 4H: 07:02, 11:02, 15:02, 19:02, 23:02, 03:02)
+    # 0,4,8,12,16,20 UTC ตรงกับเวลาไทย 07,11,15,19,23,03 น.
     - cron: '2 0,4,8,12,16,20 * * *'
   workflow_dispatch:
 
 jobs:
-  scan_4h:
+  scan:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
