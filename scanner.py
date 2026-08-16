@@ -1,27 +1,25 @@
 import sys
-import os
 import requests
 import pandas as pd
 import numpy as np
 import time
-import traceback
 
-# --- 1. ข้อมูลการแจ้งเตือน Telegram ---
+# --- 1. ข้อมูล Telegram ---
 TELEGRAM_TOKEN = "8903982584:AAF1EJ1OzjFpYzWJzAHeti8_xbQgVpYy8CU"
 TELEGRAM_CHAT_ID = "1376495243"
 
-# --- 2. Top 31 Watchlist เรียง A -> Z ---
+# --- 2. Top 30 High-Volume Binance (รวม PAXG) เรียง A -> Z ---
 WATCHLIST = sorted([
-    "AAVE", "ADA", "APT", "AVAX", "BCH",
-    "BNB", "BTC", "DOT", "ENA", "ETH",
-    "FET", "INJ", "JTO", "KAS", "LDO",
-    "LINK", "LTC", "NEAR", "ONDO", "PAXG",
+    "AAVE", "ADA", "APT", "ARB", "AVAX",
+    "BCH", "BNB", "BTC", "DOGE", "DOT",
+    "ENA", "ETH", "FET", "INJ", "LINK",
+    "LTC", "NEAR", "ONDO", "OP", "PAXG",
     "PENDLE", "RENDER", "SEI", "SOL", "SUI",
-    "TAO", "TIA", "TRX", "UNI", "XLM", "XRP"
+    "TAO", "TIA", "UNI", "XLM", "XRP"
 ])
 
 def get_4h_candles(coin):
-    """ดึงข้อมูลกราฟ 4H จาก Gate.io หรือ KuCoin พร้อมระบบแปลงค่ากันแครช"""
+    """ดึงข้อมูลกราฟ 4H"""
     try:
         url = f"https://api.gateio.ws/api/v4/spot/candlesticks?currency_pair={coin}_USDT&interval=4h&limit=150"
         res = requests.get(url, timeout=7).json()
@@ -57,7 +55,7 @@ def get_4h_candles(coin):
     return None
 
 def check_setup(df):
-    """คำนวณแยกสถานะ Ichimoku Cloud (9,26,52) + EMA89 ตามสูตร A.Aun"""
+    """คำนวณ Ichimoku Cloud (9,26,52) + EMA89"""
     try:
         df["ema89"] = df["close"].ewm(span=89, adjust=False).mean()
 
@@ -78,7 +76,6 @@ def check_setup(df):
             top_kumo = last_ema89
             bot_kumo = last_ema89
 
-        # เช็กสถานะเมฆ
         if last_close > top_kumo:
             ichi_status = "เหนือเมฆ"
         elif last_close < bot_kumo:
@@ -86,10 +83,8 @@ def check_setup(df):
         else:
             ichi_status = "ในเนื้อเมฆ"
 
-        # เช็กสถานะ EMA89
         ema_status = "เหนือ EMA89" if last_close >= last_ema89 else "ใต้ EMA89"
 
-        # จัดหมวดหมู่หลัก
         if ichi_status == "เหนือเมฆ" and ema_status == "เหนือ EMA89":
             category = "BUY"
         elif ichi_status == "ใต้เมฆ" and ema_status == "ใต้ EMA89":
@@ -102,7 +97,7 @@ def check_setup(df):
         return "UNKNOWN", "ดึงข้อมูลล้มเหลว", "ไม่ระบุ"
 
 def send_telegram(message):
-    """ส่งข้อความเข้า Telegram ปลอดภัย 100%"""
+    """ส่งข้อความเข้า Telegram"""
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
         payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
@@ -111,71 +106,61 @@ def send_telegram(message):
             payload_plain = {"chat_id": TELEGRAM_CHAT_ID, "text": message.replace("*", "").replace("`", "")}
             requests.post(url, json=payload_plain, timeout=10)
     except Exception as e:
-        print(f"Telegram send error: {e}")
+        print(f"Telegram error: {e}")
 
 def main():
-    try:
-        buy_list = []
-        sell_list = []
-        unknown_list = []
+    buy_list = []
+    sell_list = []
+    unknown_list = []
 
-        for coin in WATCHLIST:
-            sym = f"{coin}USDT"
-            df = get_4h_candles(coin)
-            if df is not None:
-                category, ichi_status, ema_status = check_setup(df)
-                item_text = f"• `{sym:<10}:` {ichi_status} | {ema_status}"
+    for coin in WATCHLIST:
+        sym = f"{coin}USDT"
+        df = get_4h_candles(coin)
+        if df is not None:
+            category, ichi_status, ema_status = check_setup(df)
+            item_text = f"• `{sym:<10}:` {ichi_status} | {ema_status}"
 
-                if category == "BUY":
-                    buy_list.append(item_text)
-                elif category == "SELL":
-                    sell_list.append(item_text)
-                else:
-                    unknown_list.append(item_text)
+            if category == "BUY":
+                buy_list.append(item_text)
+            elif category == "SELL":
+                sell_list.append(item_text)
             else:
-                item_text = f"• `{sym:<10}:` ⚠️ ดึงข้อมูลล้มเหลว"
                 unknown_list.append(item_text)
-
-            time.sleep(0.04)
-
-        report = ["📊 *4H (A.Aun Setup) - Watchlist*", "────────────────────────"]
-
-        report.append(f"🟢 *BUY (LONG)* [{len(buy_list)}]")
-        if buy_list:
-            report.extend(buy_list)
         else:
-            report.append("• _ไม่มีเหรียญที่ตรงเงื่อนไข_")
-        report.append("")
+            unknown_list.append(f"• `{sym:<10}:` ⚠️ ดึงข้อมูลล้มเหลว")
 
-        report.append(f"🔴 *SELL (SHORT)* [{len(sell_list)}]")
-        if sell_list:
-            report.extend(sell_list)
-        else:
-            report.append("• _ไม่มีเหรียญที่ตรงเงื่อนไข_")
-        report.append("")
+        time.sleep(0.04)
 
-        report.append(f"⚪ *UNKNOWN (NO TRADE)* [{len(unknown_list)}]")
-        if unknown_list:
-            report.extend(unknown_list)
-        else:
-            report.append("• _ไม่มีเหรียญ_")
+    report = ["📊 *4H (A.Aun Setup) - Watchlist*", "────────────────────────"]
 
-        report.append("────────────────────────")
-        report.append("📌 *กฎเหล็ก 4H (A.Aun Mindset):*")
-        report.append("• โฟกัสเฉพาะกลุ่ม 🟢 หรือ 🔴 เท่านั้น (⚪ ข้ามเด็ดขาด)")
-        report.append("• ห้ามเปิดออเดอร์ทันทีใน 4H ให้รอบอท 15M แจ้งเตือนจุดพักตัว")
-        report.append("• คัดเลือกเหรียญที่โครงสร้างกราฟสวยและเคลียร์ที่สุด 1–2 ตัว")
+    report.append(f"🟢 *BUY (LONG)* [{len(buy_list)}]")
+    if buy_list:
+        report.extend(buy_list)
+    else:
+        report.append("• _ไม่มีเหรียญที่ตรงเงื่อนไข_")
+    report.append("")
 
-        final_message = "\n".join(report)
-        send_telegram(final_message)
-        print("4H Scanner executed successfully.")
+    report.append(f"🔴 *SELL (SHORT)* [{len(sell_list)}]")
+    if sell_list:
+        report.extend(sell_list)
+    else:
+        report.append("• _ไม่มีเหรียญที่ตรงเงื่อนไข_")
+    report.append("")
 
-    except Exception as e:
-        print(f"Fatal error in 4H main: {e}")
-        traceback.print_exc()
+    report.append(f"⚪ *UNKNOWN (NO TRADE)* [{len(unknown_list)}]")
+    if unknown_list:
+        report.extend(unknown_list)
+    else:
+        report.append("• _ไม่มีเหรียญ_")
+
+    report.append("────────────────────────")
+    report.append("📌 *กฎเหล็ก 4H (A.Aun Mindset):*")
+    report.append("• โฟกัสเฉพาะกลุ่ม 🟢 หรือ 🔴 เท่านั้น (⚪ ข้ามเด็ดขาด)")
+    report.append("• ห้ามเปิดออเดอร์ทันทีใน 4H ให้รอบอท 15M แจ้งเตือนจุดพักตัว")
+    report.append("• X-ABC?")
+
+    send_telegram("\n".join(report))
+    print("4H Scanner completed.")
 
 if __name__ == "__main__":
-    try:
-        main()
-    finally:
-        sys.exit(0)
+    main()
