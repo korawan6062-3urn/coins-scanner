@@ -18,19 +18,19 @@ WATCHLIST = sorted([
     "TAO", "TIA", "UNI", "XLM", "XRP"
 ])
 
-def get_candles(coin, interval="4h", limit=120):
-    """ดึงข้อมูลแท่งเทียนจาก Gate.io หรือ KuCoin"""
+def get_candles(coin, interval="4h", limit=250):
+    """ดึงข้อมูลแท่งเทียน 250 แท่ง เพื่อความแม่นยำระดับเดียวกับ TradingView"""
     try:
         url = f"https://api.gateio.ws/api/v4/spot/candlesticks?currency_pair={coin}_USDT&interval={interval}&limit={limit}"
         res = requests.get(url, timeout=7).json()
-        if isinstance(res, list) and len(res) >= 50:
+        if isinstance(res, list) and len(res) >= 100:
             df = pd.DataFrame(res, columns=["time", "volume", "close", "high", "low", "open"])
             df["time"] = pd.to_numeric(df["time"], errors="coerce")
             df = df.sort_values(by="time").reset_index(drop=True)
             for col in ["close", "high", "low", "open"]:
                 df[col] = pd.to_numeric(df[col], errors="coerce")
             df = df.dropna().reset_index(drop=True)
-            if len(df) >= 50:
+            if len(df) >= 100:
                 return df
     except Exception:
         pass
@@ -41,14 +41,14 @@ def get_candles(coin, interval="4h", limit=120):
         res = requests.get(url, timeout=7).json()
         if isinstance(res, dict) and res.get("code") == "200000" and res.get("data"):
             raw = res["data"]
-            if len(raw) >= 50:
+            if len(raw) >= 100:
                 df = pd.DataFrame(raw, columns=["time", "open", "close", "high", "low", "volume", "turnover"])
                 df["time"] = pd.to_numeric(df["time"], errors="coerce")
                 df = df.sort_values(by="time").reset_index(drop=True)
                 for col in ["close", "high", "low", "open"]:
                     df[col] = pd.to_numeric(df[col], errors="coerce")
                 df = df.dropna().reset_index(drop=True)
-                if len(df) >= 50:
+                if len(df) >= 100:
                     return df
     except Exception:
         pass
@@ -56,7 +56,7 @@ def get_candles(coin, interval="4h", limit=120):
     return None
 
 def check_4h_trend(df_4h):
-    """ตรวจทิศทาง 4H กรองเฉพาะเมฆ Ichimoku เท่านั้น (ไม่บล็อก EMA89)"""
+    """ตรวจทิศทาง 4H กรองเฉพาะเมฆ Ichimoku เท่านั้น"""
     try:
         tenkan = (df_4h["high"].rolling(9).max() + df_4h["low"].rolling(9).min()) / 2
         kijun = (df_4h["high"].rolling(26).max() + df_4h["low"].rolling(26).min()) / 2
@@ -70,7 +70,6 @@ def check_4h_trend(df_4h):
         if pd.isna(top_kumo) or pd.isna(bot_kumo):
             return "NONE"
 
-        # 4H เหนือเมฆ = อนุญาต BUY / 4H ใต้เมฆ = อนุญาต SELL
         if last_close > top_kumo:
             return "BUY"
         elif last_close < bot_kumo:
@@ -81,27 +80,36 @@ def check_4h_trend(df_4h):
     return "NONE"
 
 def check_15m_trigger(df_15m, trend_4h):
-    """ตรวจจุดตัด MACD 15M (Signal Line EMA 9 ตรง TradingView)"""
+    """ตรวจจุดตัด MACD 15M แบบดักย้อนหลัง 3 แท่ง (รองรับ GitHub Actions Delay)"""
     try:
         fast = df_15m["close"].ewm(span=12, adjust=False).mean()
         slow = df_15m["close"].ewm(span=26, adjust=False).mean()
         macd = fast - slow
         signal = macd.ewm(span=9, adjust=False).mean()
 
-        crossover_now  = (macd.iloc[-2] <= signal.iloc[-2]) and (macd.iloc[-1] > signal.iloc[-1])
-        crossover_prev = (macd.iloc[-3] <= signal.iloc[-3]) and (macd.iloc[-2] > signal.iloc[-2])
+        # ตรวจสอบจุดตัดย้อนหลัง 3 แท่ง (แท่ง -1, -2, -3)
+        crossover_1 = (macd.iloc[-2] <= signal.iloc[-2]) and (macd.iloc[-1] > signal.iloc[-1])
+        crossover_2 = (macd.iloc[-3] <= signal.iloc[-3]) and (macd.iloc[-2] > signal.iloc[-2])
+        crossover_3 = (macd.iloc[-4] <= signal.iloc[-4]) and (macd.iloc[-3] > signal.iloc[-3])
 
-        crossunder_now  = (macd.iloc[-2] >= signal.iloc[-2]) and (macd.iloc[-1] < signal.iloc[-1])
-        crossunder_prev = (macd.iloc[-3] >= signal.iloc[-3]) and (macd.iloc[-2] < signal.iloc[-2])
+        crossunder_1 = (macd.iloc[-2] >= signal.iloc[-2]) and (macd.iloc[-1] < signal.iloc[-1])
+        crossunder_2 = (macd.iloc[-3] >= signal.iloc[-3]) and (macd.iloc[-2] < signal.iloc[-2])
+        crossunder_3 = (macd.iloc[-4] >= signal.iloc[-4]) and (macd.iloc[-3] < signal.iloc[-3])
 
-        # BUY: 4H เหนือเมฆ + 15M ตัดขึ้นใต้เส้น 0
+        # BUY: 4H เหนือเมฆ + ตัดขึ้นใต้ 0 ภายใน 3 แท่งล่าสุด + ปัจจุบัน MACD ยังอยู่เหนือ Signal
         if trend_4h == "BUY":
-            if (crossover_now and macd.iloc[-1] < 0) or (crossover_prev and macd.iloc[-2] < 0):
+            had_crossover = (crossover_1 and macd.iloc[-1] < 0) or \
+                            (crossover_2 and macd.iloc[-2] < 0) or \
+                            (crossover_3 and macd.iloc[-3] < 0)
+            if had_crossover and (macd.iloc[-1] > signal.iloc[-1]):
                 return "TRIGGER_LONG"
 
-        # SELL: 4H ใต้เมฆ + 15M ตัดลงเหนือเส้น 0
+        # SELL: 4H ใต้เมฆ + ตัดลงเหนือ 0 ภายใน 3 แท่งล่าสุด + ปัจจุบัน MACD ยังอยู่ใต้ Signal
         elif trend_4h == "SELL":
-            if (crossunder_now and macd.iloc[-1] > 0) or (crossunder_prev and macd.iloc[-2] > 0):
+            had_crossunder = (crossunder_1 and macd.iloc[-1] > 0) or \
+                             (crossunder_2 and macd.iloc[-2] > 0) or \
+                             (crossunder_3 and macd.iloc[-3] > 0)
+            if had_crossunder and (macd.iloc[-1] < signal.iloc[-1]):
                 return "TRIGGER_SHORT"
 
     except Exception as e:
@@ -125,7 +133,7 @@ def main():
     triggers = []
 
     for coin in WATCHLIST:
-        df_4h = get_candles(coin, interval="4h", limit=120)
+        df_4h = get_candles(coin, interval="4h", limit=250)
         if df_4h is None:
             continue
 
@@ -133,7 +141,7 @@ def main():
         if trend_4h == "NONE":
             continue
 
-        df_15m = get_candles(coin, interval="15m", limit=120)
+        df_15m = get_candles(coin, interval="15m", limit=250)
         if df_15m is None:
             continue
 
