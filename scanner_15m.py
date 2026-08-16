@@ -56,9 +56,8 @@ def get_candles(coin, interval="4h", limit=120):
     return None
 
 def check_4h_trend(df_4h):
-    """ตรวจทิศทางหลัก 4H (ต้องพ้นเมฆ และยืนเหนือ/ใต้ EMA89)"""
+    """ตรวจทิศทาง 4H กรองเฉพาะเมฆ Ichimoku เท่านั้น (ไม่บล็อก EMA89)"""
     try:
-        ema89 = df_4h["close"].ewm(span=89, adjust=False).mean()
         tenkan = (df_4h["high"].rolling(9).max() + df_4h["low"].rolling(9).min()) / 2
         kijun = (df_4h["high"].rolling(26).max() + df_4h["low"].rolling(26).min()) / 2
         span_a = ((tenkan + kijun) / 2).shift(26)
@@ -67,15 +66,14 @@ def check_4h_trend(df_4h):
         last_close = df_4h["close"].iloc[-1]
         top_kumo = max(span_a.iloc[-1], span_b.iloc[-1])
         bot_kumo = min(span_a.iloc[-1], span_b.iloc[-1])
-        last_ema = ema89.iloc[-1]
 
         if pd.isna(top_kumo) or pd.isna(bot_kumo):
-            top_kumo = last_ema
-            bot_kumo = last_ema
+            return "NONE"
 
-        if last_close > top_kumo and last_close > last_ema:
+        # 4H เหนือเมฆ = อนุญาต BUY / 4H ใต้เมฆ = อนุญาต SELL
+        if last_close > top_kumo:
             return "BUY"
-        elif last_close < bot_kumo and last_close < last_ema:
+        elif last_close < bot_kumo:
             return "SELL"
     except Exception:
         pass
@@ -96,12 +94,12 @@ def check_15m_trigger(df_15m, trend_4h):
         crossunder_now  = (macd.iloc[-2] >= signal.iloc[-2]) and (macd.iloc[-1] < signal.iloc[-1])
         crossunder_prev = (macd.iloc[-3] >= signal.iloc[-3]) and (macd.iloc[-2] < signal.iloc[-2])
 
-        # BUY: 4H ขาขึ้น + 15M ตัดขึ้นใต้เส้น 0
+        # BUY: 4H เหนือเมฆ + 15M ตัดขึ้นใต้เส้น 0
         if trend_4h == "BUY":
             if (crossover_now and macd.iloc[-1] < 0) or (crossover_prev and macd.iloc[-2] < 0):
                 return "TRIGGER_LONG"
 
-        # SELL: 4H ขาลง + 15M ตัดลงเหนือเส้น 0
+        # SELL: 4H ใต้เมฆ + 15M ตัดลงเหนือเส้น 0
         elif trend_4h == "SELL":
             if (crossunder_now and macd.iloc[-1] > 0) or (crossunder_prev and macd.iloc[-2] > 0):
                 return "TRIGGER_SHORT"
@@ -149,7 +147,7 @@ def main():
             card = (
                 f"🟢 *LONG ENTRY TRIGGER:* `{sym}`\n"
                 f"• *โครงสร้าง:* เหนือเมฆ 4H + 15M Golden Cross\n"
-                f"• *MACD Zone:* ตัดขึ้นในโซน *MACD น้อยกว่า 0* (จบการย่อพักตัว ✅)"
+                f"• *MACD Zone:* ตัดขึ้นในโซน *MACD < 0* (จบการย่อพักตัว ✅)"
             )
             triggers.append(card)
 
@@ -157,7 +155,7 @@ def main():
             card = (
                 f"🔴 *SHORT ENTRY TRIGGER:* `{sym}`\n"
                 f"• *โครงสร้าง:* ใต้เมฆ 4H + 15M Death Cross\n"
-                f"• *MACD Zone:* ตัดลงในโซน *MACD มากกว่า 0* (จบการเด้งทดสอบ ✅)"
+                f"• *MACD Zone:* ตัดลงในโซน *MACD > 0* (จบการเด้งทดสอบ ✅)"
             )
             triggers.append(card)
 
@@ -167,12 +165,10 @@ def main():
         msg = ["⚡️ *[15M A.Aun SETUP TRIGGER]*", "────────────────────────"]
         msg.extend(triggers)
         msg.append("────────────────────────")
-        msg.append("🎯 *Checklist เข้าไม้หน้างาน 5M (A.Aun Execution):*")
-        msg.append("1. *เปิด 5M เช็กการเรียงเส้น EMA ทันที:*")
-        msg.append("   • ฝั่ง BUY: ต้องเรียง *EMA 21 > 35 > 89* (พัดขึ้น)")
-        msg.append("   • ฝั่ง SELL: ต้องเรียง *EMA 21 < 35 < 89* (พัดทิ่มลง)")
-        msg.append("2. *จังหวะเข้า:* รอแท่ง 5M ย่อทดสอบโซนเส้น EMA 21 หรือ 35 (ห้ามกดไล่ราคา)")
-        msg.append("3. *เช็กตาเปล่า:* สังเกต Divergence หน้างานด้วยตัวเอง (หากมี Divergence ให้ลดขนาดออเดอร์ หรือ เลี่ยงการเทรด)")
+        msg.append("🎯 *Checklist เข้าไม้หน้างาน 5M:*")
+        msg.append("1. *เปิด 5M ดู Dashboard:* ต้องขึ้นสถานะ UP TREND หรือ DOWN TREND")
+        msg.append("2. *จังหวะเข้า:* รอแท่ง 5M สัมผัสแนวรับ/ต้าน EMA 21 หรือ 35 (ห้ามกดไล่ราคา)")
+        msg.append("3. *เช็กตาเปล่า:* สังเกตระยะห่าง EMA 89 และ Regular Divergence")
         msg.append("4. *ตั้งความเสี่ยง:* วาง SL เหนือ/ใต้ Swing 15M ล่าสุด และตั้ง TP ขั้นต่ำ *R:R 1:1.5 – 1:2*")
         send_telegram("\n".join(msg))
     else:
