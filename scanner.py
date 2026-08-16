@@ -7,7 +7,7 @@ import time
 TELEGRAM_TOKEN = "8903982584:AAF1EJ1OzjFpYzWJzAHeti8_xbQgVpYy8CU"
 TELEGRAM_CHAT_ID = "1376495243"
 
-# --- 2. Watchlist 31 ตัว (รวมทองคำ PAXG) เรียง A -> Z ---
+# --- 2. Top 31 Curated Watchlist (รวม PAXG ทองคำ) เรียง A -> Z ---
 WATCHLIST = sorted([
     "AAVE", "ADA", "APT", "AVAX", "BCH",
     "BNB", "BTC", "DOT", "ENA", "ETH",
@@ -18,7 +18,7 @@ WATCHLIST = sorted([
 ])
 
 def get_4h_candles(coin):
-    """ดึงข้อมูลกราฟ 4H จาก Gate.io หรือ KuCoin"""
+    """ดึงข้อมูลกราฟ 4H จาก Gate.io หรือ KuCoin (ดึง 150 แท่งเพื่อความแม่นยำ)"""
     try:
         url = f"https://api.gateio.ws/api/v4/spot/candlesticks?currency_pair={coin}_USDT&interval=4h&limit=150"
         res = requests.get(url, timeout=5).json()
@@ -50,8 +50,11 @@ def get_4h_candles(coin):
 
     return None
 
-def detect_macd_divergence(df, lookback=50):
-    """ตรวจจับ Divergence 4H ครอบคลุมทั้งก้นคลื่น Swing และ Live Bar"""
+def detect_macd_divergence(df, lookback=100):
+    """
+    ตรวจจับ Macro Bullish/Bearish Divergence ครอบคลุมรอบคลื่นใหญ่ 100 แท่ง
+    ตรวจจับจากก้นแอ่ง/ยอดคลื่น MACD โดยตรง (แก้ปัญหาคลื่นกว้างแบบ ONDO)
+    """
     try:
         fast_ema = df["close"].ewm(span=12, adjust=False).mean()
         slow_ema = df["close"].ewm(span=26, adjust=False).mean()
@@ -63,29 +66,33 @@ def detect_macd_divergence(df, lookback=50):
         lows = sub_df["low"].values
         n = len(sub_df)
 
-        pl_idx = [i for i in range(2, n - 2) if lows[i] == min(lows[i-2:i+3])]
-        ph_idx = [i for i in range(2, n - 2) if highs[i] == max(highs[i-2:i+3])]
+        if n < 40:
+            return ""
 
         # 1. Bullish Divergence (สำหรับเตือนฝั่ง SELL)
-        if len(pl_idx) >= 2:
-            p1, p2 = pl_idx[-2], pl_idx[-1]
-            if (n - 1 - p2) <= 8 and lows[p2] < lows[p1] and sub_macd[p2] > sub_macd[p1]:
-                return " 🔥 Bull Div"
+        curr_price = lows[-1]
+        curr_macd = sub_macd[-1]
 
-        if len(pl_idx) >= 1:
-            p_last = pl_idx[-1]
-            if (n - 1 - p_last) >= 2 and lows[-1] < lows[p_last] and sub_macd[-1] > sub_macd[p_last]:
+        past_window_macd = sub_macd[max(0, n - 80): n - 10]
+        past_window_lows = lows[max(0, n - 80): n - 10]
+
+        if len(past_window_macd) > 0:
+            min_past_macd = np.min(past_window_macd)
+            idx_min_macd = np.argmin(past_window_macd)
+            price_at_min_macd = past_window_lows[idx_min_macd]
+
+            if curr_price <= price_at_min_macd and curr_macd > (min_past_macd * 0.75) and min_past_macd < 0:
                 return " 🔥 Bull Div"
 
         # 2. Bearish Divergence (สำหรับเตือนฝั่ง BUY)
-        if len(ph_idx) >= 2:
-            p1, p2 = ph_idx[-2], ph_idx[-1]
-            if (n - 1 - p2) <= 8 and highs[p2] > highs[p1] and sub_macd[p2] < sub_macd[p1]:
-                return " ⚠️ Bear Div"
+        past_window_highs = highs[max(0, n - 80): n - 10]
 
-        if len(ph_idx) >= 1:
-            p_last = ph_idx[-1]
-            if (n - 1 - p_last) >= 2 and highs[-1] > highs[p_last] and sub_macd[-1] < sub_macd[p_last]:
+        if len(past_window_macd) > 0:
+            max_past_macd = np.max(past_window_macd)
+            idx_max_macd = np.argmax(past_window_macd)
+            price_at_max_macd = past_window_highs[idx_max_macd]
+
+            if curr_price >= price_at_max_macd and curr_macd < (max_past_macd * 0.75) and max_past_macd > 0:
                 return " ⚠️ Bear Div"
 
     except Exception:
