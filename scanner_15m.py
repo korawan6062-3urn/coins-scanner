@@ -83,30 +83,25 @@ def check_4h_trend(df_4h):
     return "NONE"
 
 def check_15m_trigger(df_15m, trend_4h):
-    """
-    ตรวจจังหวะ 15M อิงตาม TradingView 100%:
-    1. ใช้ EMA 9 สำหรับ Signal Line (ตรงกับ TradingView)
-    2. ดักจุดตัดย้อนหลัง 2 แท่ง ป้องกัน GitHub Actions รันหน่วงเวลา
-    """
+    """ตรวจจุดตัด MACD 15M (Signal Line EMA 9 ตรง TradingView)"""
     try:
         fast = df_15m["close"].ewm(span=12, adjust=False).mean()
         slow = df_15m["close"].ewm(span=26, adjust=False).mean()
         macd = fast - slow
         signal = macd.ewm(span=9, adjust=False).mean()
 
-        # เช็กจุดตัดใน 2 แท่งล่าสุด (แท่งปิดปัจจุบัน หรือ แท่งก่อนหน้า)
         crossover_now  = (macd.iloc[-2] <= signal.iloc[-2]) and (macd.iloc[-1] > signal.iloc[-1])
         crossover_prev = (macd.iloc[-3] <= signal.iloc[-3]) and (macd.iloc[-2] > signal.iloc[-2])
 
         crossunder_now  = (macd.iloc[-2] >= signal.iloc[-2]) and (macd.iloc[-1] < signal.iloc[-1])
         crossunder_prev = (macd.iloc[-3] >= signal.iloc[-3]) and (macd.iloc[-2] < signal.iloc[-2])
 
-        # 1. ฝั่ง BUY (4H ขาขึ้น -> 15M Golden Cross ใต้เส้น 0)
+        # BUY: 4H ขาขึ้น + 15M ตัดขึ้นใต้เส้น 0
         if trend_4h == "BUY":
             if (crossover_now and macd.iloc[-1] < 0) or (crossover_prev and macd.iloc[-2] < 0):
                 return "TRIGGER_LONG"
 
-        # 2. ฝั่ง SELL (4H ขาลง -> 15M Death Cross เหนือเส้น 0)
+        # SELL: 4H ขาลง + 15M ตัดลงเหนือเส้น 0
         elif trend_4h == "SELL":
             if (crossunder_now and macd.iloc[-1] > 0) or (crossunder_prev and macd.iloc[-2] > 0):
                 return "TRIGGER_SHORT"
@@ -117,7 +112,7 @@ def check_15m_trigger(df_15m, trend_4h):
     return "NONE"
 
 def send_telegram(message):
-    """ส่งข้อความเข้า Telegram ปลอดภัย 100%"""
+    """ส่งข้อความเข้า Telegram"""
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
         payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
