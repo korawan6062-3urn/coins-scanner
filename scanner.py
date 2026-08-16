@@ -18,19 +18,19 @@ WATCHLIST = sorted([
     "TAO", "TIA", "UNI", "XLM", "XRP"
 ])
 
-def get_4h_candles(coin):
-    """ดึงข้อมูลกราฟ 4H"""
+def get_candles(coin, interval="4h", limit=120):
+    """ดึงข้อมูลแท่งเทียน 4H จาก Gate.io หรือ KuCoin"""
     try:
-        url = f"https://api.gateio.ws/api/v4/spot/candlesticks?currency_pair={coin}_USDT&interval=4h&limit=150"
+        url = f"https://api.gateio.ws/api/v4/spot/candlesticks?currency_pair={coin}_USDT&interval={interval}&limit={limit}"
         res = requests.get(url, timeout=7).json()
-        if isinstance(res, list) and len(res) >= 60:
+        if isinstance(res, list) and len(res) >= 50:
             df = pd.DataFrame(res, columns=["time", "volume", "close", "high", "low", "open"])
             df["time"] = pd.to_numeric(df["time"], errors="coerce")
             df = df.sort_values(by="time").reset_index(drop=True)
             for col in ["close", "high", "low", "open"]:
                 df[col] = pd.to_numeric(df[col], errors="coerce")
             df = df.dropna().reset_index(drop=True)
-            if len(df) >= 60:
+            if len(df) >= 50:
                 return df
     except Exception:
         pass
@@ -40,61 +40,43 @@ def get_4h_candles(coin):
         res = requests.get(url, timeout=7).json()
         if isinstance(res, dict) and res.get("code") == "200000" and res.get("data"):
             raw = res["data"]
-            if len(raw) >= 60:
+            if len(raw) >= 50:
                 df = pd.DataFrame(raw, columns=["time", "open", "close", "high", "low", "volume", "turnover"])
                 df["time"] = pd.to_numeric(df["time"], errors="coerce")
                 df = df.sort_values(by="time").reset_index(drop=True)
                 for col in ["close", "high", "low", "open"]:
                     df[col] = pd.to_numeric(df[col], errors="coerce")
                 df = df.dropna().reset_index(drop=True)
-                if len(df) >= 60:
+                if len(df) >= 50:
                     return df
     except Exception:
         pass
 
     return None
 
-def check_setup(df):
-    """คำนวณ Ichimoku Cloud (9,26,52) + EMA89"""
+def analyze_4h(df):
+    """วิเคราะห์สถานะ 4H ด้วยเมฆ Ichimoku ล้วน"""
     try:
-        df["ema89"] = df["close"].ewm(span=89, adjust=False).mean()
-
         tenkan = (df["high"].rolling(9).max() + df["low"].rolling(9).min()) / 2
         kijun = (df["high"].rolling(26).max() + df["low"].rolling(26).min()) / 2
-        span_a = (tenkan + kijun) / 2
-        span_b = (df["high"].rolling(52).max() + df["low"].rolling(52).min()) / 2
-
-        kumo_a = span_a.shift(26)
-        kumo_b = span_b.shift(26)
+        span_a = ((tenkan + kijun) / 2).shift(26)
+        span_b = ((df["high"].rolling(52).max() + df["low"].rolling(52).min()) / 2).shift(26)
 
         last_close = df["close"].iloc[-1]
-        last_ema89 = df["ema89"].iloc[-1]
-        top_kumo = max(kumo_a.iloc[-1], kumo_b.iloc[-1])
-        bot_kumo = min(kumo_a.iloc[-1], kumo_b.iloc[-1])
+        top_kumo = max(span_a.iloc[-1], span_b.iloc[-1])
+        bot_kumo = min(span_a.iloc[-1], span_b.iloc[-1])
 
         if pd.isna(top_kumo) or pd.isna(bot_kumo):
-            top_kumo = last_ema89
-            bot_kumo = last_ema89
+            return "UNKNOWN", "ไม่พบข้อมูลเมฆ"
 
         if last_close > top_kumo:
-            ichi_status = "เหนือเมฆ"
+            return "BUY", "เหนือเมฆ"
         elif last_close < bot_kumo:
-            ichi_status = "ใต้เมฆ"
+            return "SELL", "ใต้เมฆ"
         else:
-            ichi_status = "ในเนื้อเมฆ"
-
-        ema_status = "เหนือ EMA89" if last_close >= last_ema89 else "ใต้ EMA89"
-
-        if ichi_status == "เหนือเมฆ" and ema_status == "เหนือ EMA89":
-            category = "BUY"
-        elif ichi_status == "ใต้เมฆ" and ema_status == "ใต้ EMA89":
-            category = "SELL"
-        else:
-            category = "UNKNOWN"
-
-        return category, ichi_status, ema_status
+            return "UNKNOWN", "ในเนื้อเมฆ"
     except Exception:
-        return "UNKNOWN", "ดึงข้อมูลล้มเหลว", "ไม่ระบุ"
+        return "UNKNOWN", "คำนวณผิดพลาด"
 
 def send_telegram(message):
     """ส่งข้อความเข้า Telegram"""
@@ -106,7 +88,7 @@ def send_telegram(message):
             payload_plain = {"chat_id": TELEGRAM_CHAT_ID, "text": message.replace("*", "").replace("`", "")}
             requests.post(url, json=payload_plain, timeout=10)
     except Exception as e:
-        print(f"Telegram error: {e}")
+        print(f"Telegram send error: {e}")
 
 def main():
     buy_list = []
@@ -114,53 +96,44 @@ def main():
     unknown_list = []
 
     for coin in WATCHLIST:
+        df = get_candles(coin, interval="4h", limit=120)
         sym = f"{coin}USDT"
-        df = get_4h_candles(coin)
-        if df is not None:
-            category, ichi_status, ema_status = check_setup(df)
-            item_text = f"• `{sym:<10}:` {ichi_status} | {ema_status}"
+        
+        if df is None:
+            unknown_list.append(f"• `{sym}` : ดึงข้อมูลไม่ได้")
+            continue
 
-            if category == "BUY":
-                buy_list.append(item_text)
-            elif category == "SELL":
-                sell_list.append(item_text)
-            else:
-                unknown_list.append(item_text)
+        status, detail = analyze_4h(df)
+
+        if status == "BUY":
+            buy_list.append(f"• `{sym}` : {detail}")
+        elif status == "SELL":
+            sell_list.append(f"• `{sym}` : {detail}")
         else:
-            unknown_list.append(f"• `{sym:<10}:` ⚠️ ดึงข้อมูลล้มเหลว")
+            unknown_list.append(f"• `{sym}` : {detail}")
 
         time.sleep(0.04)
 
-    report = ["📊 *4H (A.Aun Setup) - Watchlist*", "────────────────────────"]
+    msg = [
+        "📊 *สรุปภาพรวมเหรียญ TF 4H (Pure Cloud)*",
+        "────────────────────────",
+        f"🟢 *BUY (LONG) {len(buy_list)}*",
+        "\n".join(buy_list) if buy_list else "• ไม่มี",
+        "",
+        f"🔴 *SELL (SHORT) {len(sell_list)}*",
+        "\n".join(sell_list) if sell_list else "• ไม่มี",
+        "",
+        f"⚪️ *UNKNOWN (NO TRADE) {len(unknown_list)}*",
+        "\n".join(unknown_list) if unknown_list else "• ไม่มี",
+        "────────────────────────",
+        "📌 *แนวทางหน้างาน:*",
+        "• โฟกัสเฉพาะกลุ่ม 🟢 หรือ 🔴 (⚪️ ข้ามเด็ดขาด)",
+        "• รอแจ้งเตือนรอบคลื่นจากบอท 15M ก่อนเปิดดูกราฟ",
+        "• สังเกตระยะห่างของเส้น EMA 89 หน้างานด้วยสายตาตัวเอง"
+    ]
 
-    report.append(f"🟢 *BUY (LONG)* [{len(buy_list)}]")
-    if buy_list:
-        report.extend(buy_list)
-    else:
-        report.append("• _ไม่มีเหรียญที่ตรงเงื่อนไข_")
-    report.append("")
-
-    report.append(f"🔴 *SELL (SHORT)* [{len(sell_list)}]")
-    if sell_list:
-        report.extend(sell_list)
-    else:
-        report.append("• _ไม่มีเหรียญที่ตรงเงื่อนไข_")
-    report.append("")
-
-    report.append(f"⚪ *UNKNOWN (NO TRADE)* [{len(unknown_list)}]")
-    if unknown_list:
-        report.extend(unknown_list)
-    else:
-        report.append("• _ไม่มีเหรียญ_")
-
-    report.append("────────────────────────")
-    report.append("📌 *กฎเหล็ก 4H (A.Aun Mindset):*")
-    report.append("• โฟกัสเฉพาะกลุ่ม 🟢 หรือ 🔴 เท่านั้น (⚪ ข้ามเด็ดขาด)")
-    report.append("• ห้ามเปิดออเดอร์ทันทีใน 4H ให้รอบอท 15M แจ้งเตือนจุดพักตัว")
-    report.append("• X-ABC?")
-
-    send_telegram("\n".join(report))
-    print("4H Scanner completed.")
+    send_telegram("\n".join(msg))
+    print("4H Summary Scanner executed successfully.")
 
 if __name__ == "__main__":
     main()
