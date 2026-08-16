@@ -52,8 +52,9 @@ def get_4h_candles(coin):
 
 def detect_macd_divergence(df, lookback=100):
     """
-    ตรวจจับ Macro Bullish/Bearish Divergence ครอบคลุมรอบคลื่นใหญ่ 100 แท่ง
-    ตรวจจับจากก้นแอ่ง/ยอดคลื่น MACD โดยตรง (แก้ปัญหาคลื่นกว้างแบบ ONDO)
+    ตรวจจับ Divergence แบบ Dual-Mode:
+    1. Micro Divergence (คลื่นสั้น 4-15 แท่งล่าสุด เช่น ADA)
+    2. Macro Divergence (คลื่นยาว 15-80 แท่ง เช่น ONDO)
     """
     try:
         fast_ema = df["close"].ewm(span=12, adjust=False).mean()
@@ -66,33 +67,58 @@ def detect_macd_divergence(df, lookback=100):
         lows = sub_df["low"].values
         n = len(sub_df)
 
-        if n < 40:
+        if n < 20:
             return ""
 
-        # 1. Bullish Divergence (สำหรับเตือนฝั่ง SELL)
         curr_price = lows[-1]
         curr_macd = sub_macd[-1]
 
-        past_window_macd = sub_macd[max(0, n - 80): n - 10]
-        past_window_lows = lows[max(0, n - 80): n - 10]
+        # ----------------------------------------------------
+        # 1. เช็ก Bullish Divergence (สำหรับเตือนฝั่ง SELL)
+        # ----------------------------------------------------
+        # โหมดที่ 1: Micro Bull Div (ก้นย่อย 4-15 แท่งล่าสุดแบบ ADA)
+        micro_macd_win = sub_macd[n-15: n-3]
+        micro_lows_win = lows[n-15: n-3]
+        if len(micro_macd_win) > 0:
+            min_micro_macd = np.min(micro_macd_win)
+            idx_micro = np.argmin(micro_macd_win)
+            price_micro = micro_lows_win[idx_micro]
 
-        if len(past_window_macd) > 0:
-            min_past_macd = np.min(past_window_macd)
-            idx_min_macd = np.argmin(past_window_macd)
-            price_at_min_macd = past_window_lows[idx_min_macd]
-
-            if curr_price <= price_at_min_macd and curr_macd > (min_past_macd * 0.75) and min_past_macd < 0:
+            if curr_price <= price_micro and curr_macd > min_micro_macd and curr_macd < 0:
                 return " 🔥 Bull Div"
 
-        # 2. Bearish Divergence (สำหรับเตือนฝั่ง BUY)
-        past_window_highs = highs[max(0, n - 80): n - 10]
+        # โหมดที่ 2: Macro Bull Div (ก้นคลื่นใหญ่ 15-80 แท่งแบบ ONDO)
+        macro_macd_win = sub_macd[max(0, n-80): n-15]
+        macro_lows_win = lows[max(0, n-80): n-15]
+        if len(macro_macd_win) > 0:
+            min_macro_macd = np.min(macro_macd_win)
+            idx_macro = np.argmin(macro_macd_win)
+            price_macro = macro_lows_win[idx_macro]
 
-        if len(past_window_macd) > 0:
-            max_past_macd = np.max(past_window_macd)
-            idx_max_macd = np.argmax(past_window_macd)
-            price_at_max_macd = past_window_highs[idx_max_macd]
+            if curr_price <= price_macro and curr_macd > (min_macro_macd * 0.75) and min_macro_macd < 0:
+                return " 🔥 Bull Div"
 
-            if curr_price >= price_at_max_macd and curr_macd < (max_past_macd * 0.75) and max_past_macd > 0:
+        # ----------------------------------------------------
+        # 2. เช็ก Bearish Divergence (สำหรับเตือนฝั่ง BUY)
+        # ----------------------------------------------------
+        # โหมดที่ 1: Micro Bear Div
+        micro_highs_win = highs[n-15: n-3]
+        if len(micro_macd_win) > 0:
+            max_micro_macd = np.max(micro_macd_win)
+            idx_micro_h = np.argmax(micro_macd_win)
+            price_micro_h = micro_highs_win[idx_micro_h]
+
+            if curr_price >= price_micro_h and curr_macd < max_micro_macd and curr_macd > 0:
+                return " ⚠️ Bear Div"
+
+        # โหมดที่ 2: Macro Bear Div
+        macro_highs_win = highs[max(0, n-80): n-15]
+        if len(macro_macd_win) > 0:
+            max_macro_macd = np.max(macro_macd_win)
+            idx_macro_h = np.argmax(macro_macd_win)
+            price_macro_h = macro_highs_win[idx_macro_h]
+
+            if curr_price >= price_macro_h and curr_macd < (max_macro_macd * 0.75) and max_macro_macd > 0:
                 return " ⚠️ Bear Div"
 
     except Exception:
