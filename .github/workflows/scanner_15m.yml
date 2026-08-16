@@ -2,7 +2,6 @@ name: 15M Trigger Scanner
 
 on:
   schedule:
-    # รันทุก 15 นาที ช่วงเวลา 07:00 - 01:00 น. เวลาไทย
     - cron: '2,17,32,47 0-17 * * *'
   workflow_dispatch:
 
