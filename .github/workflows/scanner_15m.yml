@@ -1,9 +1,8 @@
-name: 15M Trigger Scanner (Active Day Session)
+name: 15M Trigger Scanner
 
 on:
   schedule:
-    # รันทุก 15 นาที (นาทีที่ 02, 17, 32, 47) 
-    # ตั้งแต่ 07:02 - 00:47 น. เวลาไทย (00:00 - 17:00 UTC)
+    # รันทุก 15 นาที ช่วงเวลา 07:00 - 01:00 น. เวลาไทย
     - cron: '2,17,32,47 0-17 * * *'
   workflow_dispatch:
 
@@ -23,5 +22,6 @@ jobs:
         run: |
           pip install requests pandas numpy
 
-      - name: Run 15M Trigger
-        run: python scanner_15m.py
+      - name: Run 15M Scanner
+        run: |
+          python scanner_15m.py
