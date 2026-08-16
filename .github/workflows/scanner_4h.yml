@@ -2,6 +2,32 @@ name: 4H Watchlist Scanner
 
 on:
   schedule:
+    # 08:02 UTC = 15:02 น. เวลาไทย (รันทุกรอบปิดแท่ง 4H: 07:02, 11:02, 15:02, 19:02, 23:02, 03:02)
+    - cron: '2 0,4,8,12,16,20 * * *'
+  workflow_dispatch:
+
+jobs:
+  scan_4h:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install Dependencies
+        run: |
+          pip install requests pandas numpy
+
+      - name: Run 4H Scanner
+        run: |
+          python scanner.pyname: 4H Watchlist Scanner
+
+on:
+  schedule:
     # รันอัตโนมัติทุก 4 ชั่วโมงตามเวลาปิดแท่งเทียน (07:00, 11:00, 15:00, 19:00, 23:00 น. เวลาไทย)
     - cron: '2 0,4,8,12,16,20 * * *'
   workflow_dispatch: # เปิดให้มีปุ่มกด Run workflow ด้วยมือได้ตลอดเวลา
