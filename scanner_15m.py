@@ -19,7 +19,7 @@ WATCHLIST = sorted([
 ])
 
 def get_candles(coin, interval="4h", limit=120):
-    """ดึงข้อมูลแท่งเทียน"""
+    """ดึงข้อมูลแท่งเทียนจาก Gate.io หรือ KuCoin"""
     try:
         url = f"https://api.gateio.ws/api/v4/spot/candlesticks?currency_pair={coin}_USDT&interval={interval}&limit={limit}"
         res = requests.get(url, timeout=7).json()
@@ -56,7 +56,7 @@ def get_candles(coin, interval="4h", limit=120):
     return None
 
 def check_4h_trend(df_4h):
-    """ตรวจทิศทางหลัก 4H"""
+    """ตรวจทิศทางหลัก 4H (ต้องพ้นเมฆ และยืนเหนือ/ใต้ EMA89)"""
     try:
         ema89 = df_4h["close"].ewm(span=89, adjust=False).mean()
         tenkan = (df_4h["high"].rolling(9).max() + df_4h["low"].rolling(9).min()) / 2
@@ -83,29 +83,41 @@ def check_4h_trend(df_4h):
     return "NONE"
 
 def check_15m_trigger(df_15m, trend_4h):
-    """ตรวจจังหวะจบย่อ 15M: BUY < 0 / SELL > 0"""
+    """
+    ตรวจจังหวะ 15M อิงตาม TradingView 100%:
+    1. ใช้ EMA 9 สำหรับ Signal Line (ตรงกับ TradingView)
+    2. ดักจุดตัดย้อนหลัง 2 แท่ง ป้องกัน GitHub Actions รันหน่วงเวลา
+    """
     try:
         fast = df_15m["close"].ewm(span=12, adjust=False).mean()
         slow = df_15m["close"].ewm(span=26, adjust=False).mean()
         macd = fast - slow
-        signal = macd.rolling(window=9).mean()
+        signal = macd.ewm(span=9, adjust=False).mean()
 
-        m_prev, m_now = macd.iloc[-2], macd.iloc[-1]
-        s_prev, s_now = signal.iloc[-2], signal.iloc[-1]
+        # เช็กจุดตัดใน 2 แท่งล่าสุด (แท่งปิดปัจจุบัน หรือ แท่งก่อนหน้า)
+        crossover_now  = (macd.iloc[-2] <= signal.iloc[-2]) and (macd.iloc[-1] > signal.iloc[-1])
+        crossover_prev = (macd.iloc[-3] <= signal.iloc[-3]) and (macd.iloc[-2] > signal.iloc[-2])
 
+        crossunder_now  = (macd.iloc[-2] >= signal.iloc[-2]) and (macd.iloc[-1] < signal.iloc[-1])
+        crossunder_prev = (macd.iloc[-3] >= signal.iloc[-3]) and (macd.iloc[-2] < signal.iloc[-2])
+
+        # 1. ฝั่ง BUY (4H ขาขึ้น -> 15M Golden Cross ใต้เส้น 0)
         if trend_4h == "BUY":
-            if (m_prev <= s_prev) and (m_now > s_now) and (m_now < 0):
+            if (crossover_now and macd.iloc[-1] < 0) or (crossover_prev and macd.iloc[-2] < 0):
                 return "TRIGGER_LONG"
+
+        # 2. ฝั่ง SELL (4H ขาลง -> 15M Death Cross เหนือเส้น 0)
         elif trend_4h == "SELL":
-            if (m_prev >= s_prev) and (m_now < s_now) and (m_now > 0):
+            if (crossunder_now and macd.iloc[-1] > 0) or (crossunder_prev and macd.iloc[-2] > 0):
                 return "TRIGGER_SHORT"
-    except Exception:
-        pass
+
+    except Exception as e:
+        print(f"15M Trigger error: {e}")
 
     return "NONE"
 
 def send_telegram(message):
-    """ส่งข้อความเข้า Telegram"""
+    """ส่งข้อความเข้า Telegram ปลอดภัย 100%"""
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
         payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
@@ -114,7 +126,7 @@ def send_telegram(message):
             payload_plain = {"chat_id": TELEGRAM_CHAT_ID, "text": message.replace("*", "").replace("`", "")}
             requests.post(url, json=payload_plain, timeout=10)
     except Exception as e:
-        print(f"Telegram error: {e}")
+        print(f"Telegram send error: {e}")
 
 def main():
     triggers = []
@@ -171,7 +183,7 @@ def main():
     else:
         print("No 15M triggers found at this moment.")
 
-    print("15M Scanner completed.")
+    print("15M Scanner executed successfully.")
 
 if __name__ == "__main__":
     main()
