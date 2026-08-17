@@ -2,10 +2,7 @@ name: Market Flow Scanner
 
 on:
   workflow_dispatch:
-  schedule:
-    # รันเวลาไทย: 07:01, 15:01, 23:01 (UTC: 00, 08, 16)
-    - cron: '1 0,8,16 * * *'
-
+  
 jobs:
   scan:
     runs-on: ubuntu-latest
