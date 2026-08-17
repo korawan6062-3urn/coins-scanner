@@ -1,18 +1,27 @@
-name: 15M Trigger Scanner
+name: 15M MACD Event Scanner
 
 on:
   schedule:
-    # รันที่นาที 02, 17, 32, 47 ของทุกชั่วโมง
-    - cron: '2,17,32,47 * * * *'
+    # รันที่นาที 01, 16, 31, 46 ของทุกชั่วโมง (UTC)
+    - cron: '1,16,31,46 * * * *'
   workflow_dispatch:
 
 jobs:
   scan:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
           python-version: '3.10'
-      - run: pip install requests pandas numpy
-      - run: python scanner_15m.py
+
+      - name: Install Dependencies
+        run: |
+          pip install requests pandas numpy
+
+      - name: Run 15M Scanner
+        run: |
+          python scanner_15m.py
