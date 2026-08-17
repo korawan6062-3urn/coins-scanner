@@ -5,30 +5,28 @@ import pandas as pd
 import numpy as np
 import time
 
-# --- 1. ดึงข้อมูล Telegram จาก GitHub Secrets ---
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
+# --- 1. ดึง Token และ Chat ID จาก GitHub Secrets ---
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-# --- 2. Top 30 High-Volume Binance ---
-WATCHLIST = sorted([
-    "AAVE", "ADA", "APT", "ARB", "AVAX",
-    "BCH", "BNB", "BTC", "DOGE", "DOT",
-    "ENA", "ETH", "FET", "INJ", "LINK",
-    "LTC", "NEAR", "ONDO", "OP", "PAXG",
-    "PENDLE", "RENDER", "SEI", "SOL", "SUI",
-    "TAO", "TIA", "UNI", "XLM", "XRP"
-])
+WATCHLIST = [
+    "BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT",
+    "ADAUSDT", "DOGEUSDT", "AVAXUSDT", "LINKUSDT", "SUIUSDT",
+    "NEARUSDT", "APTUSDT", "FETUSDT", "RENDERUSDT", "TAOUSDT",
+    "ARBUSDT", "OPUSDT", "INJUSDT", "SEIUSDT", "TIAUSDT",
+    "DOTUSDT", "UNIUSDT", "LTCUSDT", "BCHUSDT", "XLMUSDT",
+    "ENAUSDT", "ONDOUSDT", "PENDLEUSDT", "AAVEUSDT", "PAXGUSDT"
+]
 
-def get_binance_candles_15m(coin, limit=300):
-    """ดึงข้อมูลแท่งเทียน 15M 300 แท่งตรงจาก Binance API"""
-    symbol = f"{coin}USDT"
+def get_binance_candles_15m(symbol, limit=120):
+    """ดึงแท่งเทียน 15M จาก Binance Vision Spot API"""
     endpoints = [
         f"https://data-api.binance.vision/api/v3/klines?symbol={symbol}&interval=15m&limit={limit}",
         f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval=15m&limit={limit}"
     ]
     for url in endpoints:
         try:
-            res = requests.get(url, timeout=10).json()
+            res = requests.get(url, timeout=8).json()
             if isinstance(res, list) and len(res) >= 100:
                 df = pd.DataFrame(res, columns=[
                     "open_time", "open", "high", "low", "close", "volume",
@@ -42,101 +40,120 @@ def get_binance_candles_15m(coin, limit=300):
             continue
     return None
 
-def check_macd_events(df_15m):
-    """ตรวจจับ 4 สถานะ MACD บนแท่งปิดสมบูรณ์ล่าสุด (iloc[-2])"""
+def analyze_events(df):
+    """คำนวณ MACD (12, 26, 9) และ EMA 89 ตรวจจับเฉพาะ Event จุดสัมผัส"""
     try:
-        fast = df_15m["close"].ewm(span=12, adjust=False).mean()
-        slow = df_15m["close"].ewm(span=26, adjust=False).mean()
-        macd = fast - slow
+        # 1. MACD Calculation
+        exp1 = df["close"].ewm(span=12, adjust=False).mean()
+        exp2 = df["close"].ewm(span=26, adjust=False).mean()
+        macd = exp1 - exp2
         signal = macd.ewm(span=9, adjust=False).mean()
 
-        m_prev, m_curr = macd.iloc[-3], macd.iloc[-2]
-        s_prev, s_curr = signal.iloc[-3], signal.iloc[-2]
+        # 2. EMA 89 Calculation
+        ema89 = df["close"].ewm(span=89, adjust=False).mean()
 
-        is_golden = (m_prev <= s_prev) and (m_curr > s_curr)
-        is_death  = (m_prev >= s_prev) and (m_curr < s_curr)
-        is_over0  = (m_prev <= 0) and (m_curr > 0)
-        is_under0 = (m_prev >= 0) and (m_curr < 0)
+        # แท่งที่ปิดสมบูรณ์ล่าสุด (iloc[-2]) และแท่งก่อนหน้า (iloc[-3])
+        m_curr, s_curr = macd.iloc[-2], signal.iloc[-2]
+        m_prev, s_prev = macd.iloc[-3], signal.iloc[-3]
 
-        return is_golden, is_death, is_over0, is_under0
+        low_curr, high_curr = df["low"].iloc[-2], df["high"].iloc[-2]
+        low_prev, high_prev = df["low"].iloc[-3], df["high"].iloc[-3]
+        ema_curr = ema89.iloc[-2]
+        ema_prev = ema89.iloc[-3]
+
+        events = []
+
+        # --- ตรวจจับ MACD Events ---
+        if m_prev <= s_prev and m_curr > s_curr:
+            events.append("GOLDEN_CROSS")
+        elif m_prev >= s_prev and m_curr < s_curr:
+            events.append("DEATH_CROSS")
+
+        if m_prev <= 0 and m_curr > 0:
+            events.append("OVER_0")
+        elif m_prev >= 0 and m_curr < 0:
+            events.append("UNDER_0")
+
+        # --- ตรวจจับ EMA 89 Touch Events (เพิ่งแตะแท่งนี้เป็นแท่งแรก) ---
+        # 1. แตะแนวรับ: แท่งก่อนหน้าลอยอยู่เหนือเส้น -> แท่งนี้ย่อลงมาแตะ/แทงทะลุเส้น
+        if low_prev > ema_prev and low_curr <= ema_curr:
+            events.append("TOUCH_SUPPORT")
+
+        # 2. แตะแนวต้าน: แท่งก่อนหน้าจมอยู่ใต้เส้น -> แท่งนี้เด้งขึ้นไปแตะ/แทงทะลุเส้น
+        elif high_prev < ema_prev and high_curr >= ema_curr:
+            events.append("TOUCH_RESIST")
+
+        return events
     except Exception:
-        return False, False, False, False
-
-def format_grid(coins, cols=3):
-    """จัดเรียงรายชื่อเหรียญเป็นแถวละ 3 ตัว ล็อกความกว้างช่องละ 11 ตัวอักษร"""
-    if not coins:
-        return "  • ไม่มี"
-    rows = []
-    for i in range(0, len(coins), cols):
-        chunk = coins[i:i + cols]
-        row_str = "  " + " ".join([f"`{c:<11}`" for c in chunk])
-        rows.append(row_str)
-    return "\n".join(rows)
+        return []
 
 def send_telegram(message):
-    """ส่งข้อความเข้า Telegram"""
+    """ส่งแจ้งเตือนเข้า Telegram"""
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
-        print("Error: Missing Telegram Token/Chat ID in Secrets")
+        print("Error: Missing Telegram Secrets")
         return
+
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
     try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
         res = requests.post(url, json=payload, timeout=10)
         if res.status_code != 200:
-            payload_plain = {"chat_id": TELEGRAM_CHAT_ID, "text": message.replace("*", "").replace("`", "")}
-            requests.post(url, json=payload_plain, timeout=10)
+            plain = message.replace("*", "").replace("`", "").replace("_", "")
+            requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": plain}, timeout=10)
+        print("Telegram sent successfully.")
     except Exception as e:
-        print(f"Telegram error: {e}")
+        print(f"Telegram Exception: {e}")
 
 def main():
-    golden_list = []
-    death_list  = []
-    over0_list  = []
-    under0_list = []
+    print("Scanning 15M MACD & EMA 89 Events...")
 
-    for coin in WATCHLIST:
-        df = get_binance_candles_15m(coin, limit=300)
-        if df is None:
-            continue
+    results = {
+        "GOLDEN_CROSS": [],
+        "DEATH_CROSS": [],
+        "OVER_0": [],
+        "UNDER_0": [],
+        "TOUCH_SUPPORT": [],
+        "TOUCH_RESIST": []
+    }
 
-        is_golden, is_death, is_over0, is_under0 = check_macd_events(df)
-        sym = f"{coin}USDT"
-
-        if is_golden:
-            golden_list.append(sym)
-        if is_death:
-            death_list.append(sym)
-        if is_over0:
-            over0_list.append(sym)
-        if is_under0:
-            under0_list.append(sym)
-
+    for symbol in WATCHLIST:
+        df = get_binance_candles_15m(symbol, limit=120)
+        if df is not None:
+            evs = analyze_events(df)
+            for ev in evs:
+                if ev in results:
+                    results[ev].append(symbol)
         time.sleep(0.03)
 
-    total_events = len(golden_list) + len(death_list) + len(over0_list) + len(under0_list)
+    def fmt(lst):
+        return "  " + ", ".join(lst) if lst else "  • ไม่มี"
 
-    if total_events > 0:
-        msg = [
-            "⚡️ *[15M MACD EVENT TRIGGER]*",
-            "────────────────────────",
-            f"🟢 *GOLDEN CROSS [{len(golden_list)}]*",
-            format_grid(golden_list, cols=3),
-            "",
-            f"🔴 *DEATH CROSS [{len(death_list)}]*",
-            format_grid(death_list, cols=3),
-            "",
-            f"🚀 *OVER 0 [{len(over0_list)}]*",
-            format_grid(over0_list, cols=3),
-            "",
-            f"🔻 *UNDER 0 [{len(under0_list)}]*",
-            format_grid(under0_list, cols=3),
-            "────────────────────────",
-            "📌 *Next Step:* เปิด 5M ดู Dashboard พัด EMA + รอย่อแตะ EMA 21/35"
-        ]
-        send_telegram("\n".join(msg))
-        print(f"Reported {total_events} events successfully.")
-    else:
-        print("No new 15M MACD events at this bar.")
+    msg = [
+        "⚡️ *[15M MACD & EMA 89 TRIGGER]*",
+        "────────────────────────",
+        f"🟢 *GOLDEN CROSS [{len(results['GOLDEN_CROSS'])}]*",
+        fmt(results["GOLDEN_CROSS"]),
+        "",
+        f"🔴 *DEATH CROSS [{len(results['DEATH_CROSS'])}]*",
+        fmt(results["DEATH_CROSS"]),
+        "",
+        f"🚀 *OVER 0 [{len(results['OVER_0'])}]*",
+        fmt(results["OVER_0"]),
+        "",
+        f"🔻 *UNDER 0 [{len(results['UNDER_0'])}]*",
+        fmt(results["UNDER_0"]),
+        "────────────────────────",
+        "🎯 *EMA 89 TOUCH (เพิ่งแตะเส้นแท่งแรก):*",
+        f"📥 *ย่อแตะรับ (Touch Support) [{len(results['TOUCH_SUPPORT'])}]:*",
+        fmt(results["TOUCH_SUPPORT"]),
+        "",
+        f"📤 *เด้งแตะต้าน (Touch Resist) [{len(results['TOUCH_RESIST'])}]:*",
+        fmt(results["TOUCH_RESIST"]),
+        "────────────────────────",
+        "📌 *Action:* เปิด 5M ดูโครงสร้างแท่งเทียนกลับตัวบริเวณ EMA 89"
+    ]
+
+    send_telegram("\n".join(msg))
 
 if __name__ == "__main__":
     main()
