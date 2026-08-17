@@ -1,12 +1,13 @@
+import os
 import sys
 import requests
 import pandas as pd
 import numpy as np
 import time
 
-# --- 1. ข้อมูล Telegram ---
-TELEGRAM_TOKEN = "8903982584:AAF1EJ1OzjFpYzWJzAHeti8_xbQgVpYy8CU"
-TELEGRAM_CHAT_ID = "1376495243"
+# --- 1. ดึงข้อมูล Telegram จาก GitHub Secrets ---
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 
 # --- 2. Top 30 High-Volume Binance ---
 WATCHLIST = sorted([
@@ -74,6 +75,9 @@ def format_grid(coins, cols=3):
 
 def send_telegram(message):
     """ส่งข้อความเข้า Telegram"""
+    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
+        print("Error: Missing Telegram Token/Chat ID in Secrets")
+        return
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
         payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
@@ -109,7 +113,6 @@ def main():
 
         time.sleep(0.03)
 
-    # ส่งเฉพาะเมื่อมีเหรียญเกิดการเปลี่ยนแปลงอย่างน้อย 1 กลุ่ม
     total_events = len(golden_list) + len(death_list) + len(over0_list) + len(under0_list)
 
     if total_events > 0:
