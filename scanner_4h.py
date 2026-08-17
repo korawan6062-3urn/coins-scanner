@@ -1,12 +1,13 @@
+import os
 import sys
 import requests
 import pandas as pd
 import numpy as np
 import time
 
-# --- 1. การตั้งค่า Telegram ---
-TELEGRAM_TOKEN = "8903982584:AAF1EJ1OzjFpYzWJzAHeti8_xbQgVpYy8CU"
-TELEGRAM_CHAT_ID = "1376495243"
+# --- 1. ดึงข้อมูล Telegram จาก GitHub Secrets ---
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 
 # --- 2. รายชื่อ 30 เหรียญ (Binance Watchlist) เรียง A -> Z ---
 WATCHLIST = sorted([
@@ -51,7 +52,7 @@ def analyze_4h_cloud(df):
         span_a = ((tenkan + kijun) / 2).shift(26)
         span_b = ((df["high"].rolling(52).max() + df["low"].rolling(52).min()) / 2).shift(26)
 
-        # แท่งที่เพิ่งปิดสมบูรณ์คือ iloc[-2] (iloc[-1] คือแท่งปัจจุบันที่ยังวิ่งอยู่)
+        # แท่งปิดสมบูรณ์ล่าสุดคือ iloc[-2]
         close_val = df["close"].iloc[-2]
         span_a_val = span_a.iloc[-2]
         span_b_val = span_b.iloc[-2]
@@ -84,6 +85,9 @@ def format_grid(coins, cols=3):
 
 def send_telegram(message):
     """ส่งข้อความสรุปเข้า Telegram"""
+    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
+        print("Error: Missing Telegram Token/Chat ID in Secrets")
+        return
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
         payload = {
