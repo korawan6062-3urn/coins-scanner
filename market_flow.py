@@ -5,119 +5,99 @@ import pandas as pd
 import numpy as np
 import time
 
-# --- 1. ดึง Token และ Chat ID จาก GitHub Secrets ---
+# --- ดึง Token จาก Secrets ---
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-TV_SCANNER_URL = "https://scanner.tradingview.com/crypto/scan"
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Content-Type": "application/json"
-}
-
-def get_tradingview_4h_data():
-    """ดึงข้อมูล BTC.D และ BTCUSDT 4H จาก TradingView Technical Scanner โดยตรง"""
-    payload = {
-        "symbols": {
-            "tickers": ["CRYPTOCAP:BTC.D", "BINANCE:BTCUSDT"]
-        },
-        "columns": [
-            "close",
-            "change",
-            "close|240",
-            "change|240",
-            "Ichimoku.Lead1|240",
-            "Ichimoku.Lead2|240",
-            "EMA50|240",
-            "Recommend.All|240"
-        ]
-    }
-    try:
-        res = requests.post(TV_SCANNER_URL, json=payload, headers=HEADERS, timeout=12)
-        if res.status_code == 200:
-            data = res.json().get("data", [])
-            results = {}
-            for item in data:
-                symbol = item["s"]
-                d = item["d"]
-                # ดึงค่า: close 4h, change 4h, span a, span b, ema50, recommend
-                close_4h = d[2] if d[2] is not None else d[0]
-                chg_4h   = d[3] if d[3] is not None else d[1]
-                span_a   = d[4]
-                span_b   = d[5]
-                ema_50   = d[6]
-                rec_all  = d[7]
-
-                # วิเคราะห์เมฆ Ichimoku 4H
-                if span_a is not None and span_b is not None:
-                    top_cloud = max(span_a, span_b)
-                    bot_cloud = min(span_a, span_b)
-                    if close_4h > top_cloud:
-                        status = "BULLISH"
-                    elif close_4h < bot_cloud:
-                        status = "BEARISH"
-                    else:
-                        status = "SIDEWAY"
-                elif ema_50 is not None:
-                    status = "BULLISH" if close_4h > ema_50 else "BEARISH"
-                elif rec_all is not None:
-                    status = "BULLISH" if rec_all > 0.1 else ("BEARISH" if rec_all < -0.1 else "SIDEWAY")
-                else:
-                    status = "UNKNOWN"
-
-                results[symbol] = {
-                    "close": float(close_4h),
-                    "change": float(chg_4h if chg_4h is not None else 0.0),
-                    "status": status
-                }
-            return results
-    except Exception as e:
-        print(f"TradingView Scanner Error: {e}")
+def get_binance_spot_candles(symbol, interval="4h", limit=200):
+    """ดึงข้อมูล Spot ตรงจาก Binance Vision (เสถียร 100% ไม่โดนบล็อก IP)"""
+    endpoints = [
+        f"https://data-api.binance.vision/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}",
+        f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}"
+    ]
+    for url in endpoints:
+        try:
+            res = requests.get(url, timeout=10).json()
+            if isinstance(res, list) and len(res) >= 100:
+                df = pd.DataFrame(res, columns=[
+                    "open_time", "open", "high", "low", "close", "volume",
+                    "close_time", "quote_volume", "trades", "taker_buy_base",
+                    "taker_buy_quote", "ignore"
+                ])
+                for col in ["open", "high", "low", "close", "open_time"]:
+                    df[col] = pd.to_numeric(df[col], errors="coerce")
+                return df.sort_values(by="open_time").dropna().reset_index(drop=True)
+        except Exception:
+            continue
     return None
 
-def evaluate_market_regime(btc_status, btcd_status):
-    """วิเคราะห์ Matrix กระแสเงินทุน BTC vs BTC.D (9 สภาวะ)"""
-    if btc_status == "BULLISH" and btcd_status == "BEARISH":
+def analyze_ichimoku_cloud(df):
+    """คำนวณเมฆ Ichimoku บนแท่ง 4H ปิดสมบูรณ์ล่าสุด (iloc[-2])"""
+    try:
+        tenkan = (df["high"].rolling(9).max() + df["low"].rolling(9).min()) / 2
+        kijun = (df["high"].rolling(26).max() + df["low"].rolling(26).min()) / 2
+        span_a = ((tenkan + kijun) / 2).shift(26)
+        span_b = ((df["high"].rolling(52).max() + df["low"].rolling(52).min()) / 2).shift(26)
+
+        close_val = df["close"].iloc[-2]
+        span_a_val = span_a.iloc[-2]
+        span_b_val = span_b.iloc[-2]
+
+        top_kumo = max(span_a_val, span_b_val)
+        bot_kumo = min(span_a_val, span_b_val)
+
+        if close_val > top_kumo:
+            status = "BULLISH"
+        elif close_val < bot_kumo:
+            status = "BEARISH"
+        else:
+            status = "SIDEWAY"
+
+        prev_close = df["close"].iloc[-3]
+        change_pct = ((close_val - prev_close) / prev_close) * 100
+
+        return status, close_val, change_pct
+    except Exception:
+        return "UNKNOWN", 0.0, 0.0
+
+def evaluate_regime(btc_status, ethbtc_status):
+    """วิเคราะห์กระแสเงินทุนตาม Matrix สากล"""
+    if btc_status == "BULLISH" and ethbtc_status == "BULLISH":
         title = "🚀 FULL ALTCOIN SEASON"
-        desc = "BTC ขาขึ้น แต่ส่วนแบ่งตลาดลดลง เงินไหลเข้าเก็งกำไรใน Altcoins รุนแรง"
-        bias = "เน้นเปิด LONG เหรียญ Altcoins (เลือกตัว 15M Over 0 / Golden Cross)"
+        desc = "BTC ขาขึ้น และ ETH/BTC แข็งแกร่งกว่า เงินล้นเข้าเก็งกำไรใน Altcoins"
+        bias = "เน้นเปิด LONG เหรียญ Altcoins ตามสัญญาณ 15M"
 
-    elif btc_status == "BULLISH" and btcd_status == "SIDEWAY":
-        title = "🔄 SELECTIVE ALTCOIN ROTATION"
-        desc = "BTC ขาขึ้น ส่วนแบ่งตลาดทรงตัว เงินหมุนเข้าเก็งกำไรในเหรียญลูกทีละกลุ่ม"
-        bias = "เลือก Long เหรียญที่มีสัญญาณ 4H BUY เหนือเมฆ"
+    elif btc_status == "BULLISH" and ethbtc_status == "BEARISH":
+        title = "👑 BTC SOLO RUN"
+        desc = "BTC ขึ้นเดี่ยว แต่เหรียญลูกอ่อนแอ เงินถูกดูดกลับเข้าเหรียญแม่"
+        bias = "โฟกัสเทรด BTC / ชะลอการเปิด Long Altcoins"
 
-    elif btc_status == "BULLISH" and btcd_status == "BULLISH":
-        title = "👑 BTC SOLO RUN / SURGE"
-        desc = "เงินดูดเข้า BTC ตัวเดียว Altcoins ส่วนใหญ่ถูกดูดสภาพคล่องและขึ้นช้า"
-        bias = "โฟกัสเทรด BTC / ชะลอการไล่ราคา Altcoins"
+    elif btc_status == "BEARISH" and ethbtc_status == "BEARISH":
+        title = "🩸 ALTCOIN BLEEDING / DANGER"
+        desc = "BTC ย่อตัว และเหรียญลูกโดนเทขายหนักกว่าปกติ (ความเสี่ยงสูง)"
+        bias = "หาจังหวะ SHORT Altcoins หรือ ถือ Cash 100%"
 
-    elif btc_status == "BEARISH" and btcd_status == "BULLISH":
-        title = "🩸 ALTCOIN BLEEDING / DANGER ZONE"
-        desc = "BTC ย่อตัว และส่วนแบ่งตลาดพุ่ง เหรียญลูกจะร่วงแรงเป็น 2-3 เท่า"
-        bias = "หาจังหวะ SHORT Altcoins หรือ ถือ Cash 100% (ห้ามช้อนซื้อ)"
+    elif btc_status == "BEARISH" and ethbtc_status == "BULLISH":
+        title = "🛡 ALTCOIN RESISTANCE"
+        desc = "BTC อ่อนแรง แต่เหรียญลูกบางกลุ่มยังฝืนตลาดและมีแรงพยุง"
+        bias = "เล่นสั้นเฉพาะเหรียญ Top ที่ยืนเหนือเมฆ 4H"
 
-    elif btc_status == "BEARISH" and btcd_status == "BEARISH":
-        title = "💸 TOTAL MARKET OUTFLOW / CRASH"
-        desc = "เงินไหลออกจากตลาดคริปโตทั้งหมดเข้า Stablecoin หรือ Fiat"
-        bias = "เน้นถือเงินสด หรือเล่นฝั่ง Short ภาพรวม"
-
-    elif btc_status == "SIDEWAY" and btcd_status == "BEARISH":
-        title = "🪙 ALTCOIN ACCUMULATION"
-        desc = "BTC ไซด์เวย์นิ่ง แต่ Dominance ไหลลง มีการสะสมของในเหรียญลูก"
-        bias = "ดักเก็บเหรียญต้นรอบที่เพิ่งเกิด Golden Cross บน 15M"
+    elif btc_status == "SIDEWAY" and ethbtc_status == "BULLISH":
+        title = "🔄 ALTCOIN ROTATION"
+        desc = "BTC พักตัวนิ่ง เงินหมุนเวียนเก็งกำไรในเหรียญ Altcoins ต้นรอบ"
+        bias = "ดักเข้าเหรียญ 15M Golden Cross / Over 0"
 
     else:
         title = "⚪️ CHOPPY / NEUTRAL MARKET"
-        desc = "ตลาดพักฐาน ไร้ทิศทางชัดเจนทั้ง BTC และ Dominance"
-        bias = "ลดขนาดพอร์ต (Position Size) และรอให้เลือกทางชัดเจน"
+        desc = "ตลาดพักฐาน ไร้ทิศทางชัดเจนทั้ง BTC และเหรียญลูก"
+        bias = "ลด Position Size และรอสัญญาณเลือกทาง"
 
     return title, desc, bias
 
 def send_telegram(message):
-    """ส่งข้อความเข้า Telegram พร้อม Fallback"""
+    """ส่งข้อความเข้า Telegram พร้อมระบบ Fallback Plain Text"""
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
-        print("Error: Missing TELEGRAM_TOKEN or TELEGRAM_CHAT_ID in Environment Secrets.")
+        print("Error: Missing TELEGRAM_TOKEN or TELEGRAM_CHAT_ID")
         return
 
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
@@ -132,22 +112,18 @@ def send_telegram(message):
         print(f"Telegram Exception: {e}")
 
 def main():
-    print("Fetching BTC & BTC.D 4H Data from TradingView...")
-    tv_data = get_tradingview_4h_data()
+    print("Fetching Binance Spot 4H Candles...")
+    df_btc = get_binance_spot_candles("BTCUSDT", interval="4h", limit=200)
+    df_ethbtc = get_binance_spot_candles("ETHBTC", interval="4h", limit=200)
 
-    if not tv_data or "CRYPTOCAP:BTC.D" not in tv_data or "BINANCE:BTCUSDT" not in tv_data:
-        print("Error: Could not fetch data from TradingView Scanner API.")
+    if df_btc is None or df_ethbtc is None:
+        print("Error: Could not retrieve candles from Binance Vision.")
         return
 
-    btcd_info = tv_data["CRYPTOCAP:BTC.D"]
-    btc_info  = tv_data["BINANCE:BTCUSDT"]
+    btc_status, btc_price, btc_chg = analyze_ichimoku_cloud(df_btc)
+    ethbtc_status, ethbtc_price, ethbtc_chg = analyze_ichimoku_cloud(df_ethbtc)
 
-    btc_status, btc_price, btc_chg = btc_info["status"], btc_info["close"], btc_info["change"]
-    btcd_status, btcd_val, btcd_chg = btcd_info["status"], btcd_info["close"], btcd_info["change"]
-
-    print(f"TradingView Data -> BTC: {btc_status} (${btc_price:.1f}), BTC.D: {btcd_status} ({btcd_val:.2f}%)")
-
-    title, desc, bias = evaluate_market_regime(btc_status, btcd_status)
+    title, desc, bias = evaluate_regime(btc_status, ethbtc_status)
 
     def icon(s):
         return "🟢" if s == "BULLISH" else ("🔴" if s == "BEARISH" else "⚪️")
@@ -155,16 +131,16 @@ def main():
     msg = [
         "🌐 *[MARKET REGIME & MONEY FLOW 4H]*",
         "────────────────────────",
-        "📊 *4H DATA OVERVIEW (TradingView)*",
-        f"  • BTC Price : `${btc_price:,.1f}` ({btc_chg:+.2f}%) | {icon(btc_status)} *{btc_status}*",
-        f"  • BTC.D Dom : `{btcd_val:.2f}%` ({btcd_chg:+.2f}%) | {icon(btcd_status)} *{btcd_status}*",
+        "📊 *4H DATA OVERVIEW (Spot)*",
+        f"  • BTC Price    : `${btc_price:,.1f}` ({btc_chg:+.2f}%) | {icon(btc_status)} *{btc_status}*",
+        f"  • ETH/BTC Ratio: `{ethbtc_price:.5f}` ({ethbtc_chg:+.2f}%) | {icon(ethbtc_status)} *{ethbtc_status}*",
         "────────────────────────",
         f"🎯 *MARKET STATE:*\n  *{title}*",
         f"  {desc}",
         "",
         f"💡 *TRADING PLAYBOOK:*\n  • {bias}",
         "────────────────────────",
-        "📌 *เกณฑ์การคำนวณ:* TradingView Technical 4H (Ichimoku Cloud)"
+        "📌 *เกณฑ์การคำนวณ:* Ichimoku Cloud (9, 26, 52, 26) บนแท่ง 4H ปิดสมบูรณ์"
     ]
 
     send_telegram("\n".join(msg))
