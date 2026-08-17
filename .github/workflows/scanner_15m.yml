@@ -1,10 +1,10 @@
 name: 15M MACD Event Scanner
 
 on:
-  schedule:
-    # รันที่นาที 01, 16, 31, 46 ของทุกชั่วโมง (UTC)
-    - cron: '1,16,31,46 * * * *'
   workflow_dispatch:
+  schedule:
+    # รันสำรองที่นาที 01, 16, 31, 46
+    - cron: '1,16,31,46 * * * *'
 
 jobs:
   scan:
