@@ -3,7 +3,6 @@ name: 15M MACD Event Scanner
 on:
   workflow_dispatch:
   schedule:
-    # รันสำรองที่นาที 01, 16, 31, 46
     - cron: '1,16,31,46 * * * *'
 
 jobs:
@@ -23,5 +22,8 @@ jobs:
           pip install requests pandas numpy
 
       - name: Run 15M Scanner
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
           python scanner_15m.py
