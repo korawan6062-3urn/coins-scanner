@@ -1,0 +1,18 @@
+name: 15M Trigger Scanner
+
+on:
+  schedule:
+    # รันที่นาที 02, 17, 32, 47 ของทุกชั่วโมง
+    - cron: '2,17,32,47 * * * *'
+  workflow_dispatch:
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - run: pip install requests pandas numpy
+      - run: python scanner_15m.py
