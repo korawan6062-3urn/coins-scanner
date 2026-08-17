@@ -19,7 +19,7 @@ WATCHLIST = sorted([
 ])
 
 def get_binance_candles_15m(coin, limit=300):
-    """ดึงข้อมูล 15M 300 แท่งตรงจาก Binance API"""
+    """ดึงข้อมูลแท่งเทียน 15M 300 แท่งตรงจาก Binance API"""
     symbol = f"{coin}USDT"
     endpoints = [
         f"https://data-api.binance.vision/api/v3/klines?symbol={symbol}&interval=15m&limit={limit}",
@@ -42,7 +42,7 @@ def get_binance_candles_15m(coin, limit=300):
     return None
 
 def check_macd_events(df_15m):
-    """ตรวจจับ Event การตัด และการข้ามแดน 0 บนแท่งปิดสมบูรณ์ล่าสุด (iloc[-2])"""
+    """ตรวจจับ 4 สถานะ MACD บนแท่งปิดสมบูรณ์ล่าสุด (iloc[-2])"""
     try:
         fast = df_15m["close"].ewm(span=12, adjust=False).mean()
         slow = df_15m["close"].ewm(span=26, adjust=False).mean()
@@ -52,29 +52,28 @@ def check_macd_events(df_15m):
         m_prev, m_curr = macd.iloc[-3], macd.iloc[-2]
         s_prev, s_curr = signal.iloc[-3], signal.iloc[-2]
 
-        events = []
+        is_golden = (m_prev <= s_prev) and (m_curr > s_curr)
+        is_death  = (m_prev >= s_prev) and (m_curr < s_curr)
+        is_over0  = (m_prev <= 0) and (m_curr > 0)
+        is_under0 = (m_prev >= 0) and (m_curr < 0)
 
-        # 1. ตรวจจับการตัดกัน (Crossover / Crossunder)
-        if (m_prev <= s_prev) and (m_curr > s_curr):
-            zone = "เหนือเส้น 0" if m_curr > 0 else "ใต้เส้น 0"
-            events.append(f"🟢 *Golden Cross (ตัดขึ้น):* โซน {zone} (MACD: `{m_curr:.5f}`)")
-
-        elif (m_prev >= s_prev) and (m_curr < s_curr):
-            zone = "เหนือเส้น 0" if m_curr > 0 else "ใต้เส้น 0"
-            events.append(f"🔴 *Death Cross (ตัดลง):* โซน {zone} (MACD: `{m_curr:.5f}`)")
-
-        # 2. ตรวจจับการข้ามแดน 0 (Zero-Line Break)
-        if (m_prev <= 0) and (m_curr > 0):
-            events.append(f"🚀 *ข้ามแดน 0 ขึ้น (Bullish Zero-Cross):* พลิกเข้าแดนบวก (`{m_curr:.5f}`)")
-
-        elif (m_prev >= 0) and (m_curr < 0):
-            events.append(f"🔻 *ข้ามแดน 0 ลง (Bearish Zero-Cross):* พลิกเข้าแดนลบ (`{m_curr:.5f}`)")
-
-        return events
+        return is_golden, is_death, is_over0, is_under0
     except Exception:
-        return []
+        return False, False, False, False
+
+def format_grid(coins, cols=3):
+    """จัดเรียงรายชื่อเหรียญเป็นแถวละ 3 ตัว ล็อกความกว้างช่องละ 11 ตัวอักษร"""
+    if not coins:
+        return "  • ไม่มี"
+    rows = []
+    for i in range(0, len(coins), cols):
+        chunk = coins[i:i + cols]
+        row_str = "  " + " ".join([f"`{c:<11}`" for c in chunk])
+        rows.append(row_str)
+    return "\n".join(rows)
 
 def send_telegram(message):
+    """ส่งข้อความเข้า Telegram"""
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
         payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
@@ -86,31 +85,53 @@ def send_telegram(message):
         print(f"Telegram error: {e}")
 
 def main():
-    alerts = []
+    golden_list = []
+    death_list  = []
+    over0_list  = []
+    under0_list = []
 
     for coin in WATCHLIST:
         df = get_binance_candles_15m(coin, limit=300)
         if df is None:
             continue
 
-        events = check_macd_events(df)
+        is_golden, is_death, is_over0, is_under0 = check_macd_events(df)
         sym = f"{coin}USDT"
 
-        for event in events:
-            alerts.append(f"• `{sym:<10}` : {event}")
+        if is_golden:
+            golden_list.append(sym)
+        if is_death:
+            death_list.append(sym)
+        if is_over0:
+            over0_list.append(sym)
+        if is_under0:
+            under0_list.append(sym)
 
         time.sleep(0.03)
 
-    if alerts:
+    # ส่งเฉพาะเมื่อมีเหรียญเกิดการเปลี่ยนแปลงอย่างน้อย 1 กลุ่ม
+    total_events = len(golden_list) + len(death_list) + len(over0_list) + len(under0_list)
+
+    if total_events > 0:
         msg = [
             "⚡️ *[15M MACD EVENT TRIGGER]*",
-            "────────────────────────"
+            "────────────────────────",
+            f"🟢 *GOLDEN CROSS [{len(golden_list)}]*",
+            format_grid(golden_list, cols=3),
+            "",
+            f"🔴 *DEATH CROSS [{len(death_list)}]*",
+            format_grid(death_list, cols=3),
+            "",
+            f"🚀 *OVER 0 [{len(over0_list)}]*",
+            format_grid(over0_list, cols=3),
+            "",
+            f"🔻 *UNDER 0 [{len(under0_list)}]*",
+            format_grid(under0_list, cols=3),
+            "────────────────────────",
+            "📌 *Next Step:* เปิด 5M ดู Dashboard พัด EMA + รอย่อแตะ EMA 21/35"
         ]
-        msg.extend(alerts)
-        msg.append("────────────────────────")
-        msg.append("📌 *Next Step:* เปิดชาร์ต 5M เช็ก Dashboard พัด EMA + รอแตะแนวรับ/ต้าน 21/35")
         send_telegram("\n".join(msg))
-        print(f"Sent {len(alerts)} events to Telegram.")
+        print(f"Reported {total_events} events successfully.")
     else:
         print("No new 15M MACD events at this bar.")
 
