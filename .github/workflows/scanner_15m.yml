@@ -2,8 +2,6 @@ name: 15M MACD Event Scanner
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: '1,16,31,46 * * * *'
 
 jobs:
   scan:
