@@ -3,7 +3,6 @@ name: 4H Summary Scanner
 on:
   workflow_dispatch:
   schedule:
-    # รันเวลาไทย: 07:01, 11:01, 15:01, 19:01, 23:01, 03:01 (UTC: 00, 04, 08, 12, 16, 20)
     - cron: '1 0,4,8,12,16,20 * * *'
 
 jobs:
@@ -23,5 +22,8 @@ jobs:
           pip install requests pandas numpy
 
       - name: Run 4H Scanner
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
           python scanner_4h.py
