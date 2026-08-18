@@ -9,15 +9,14 @@ import time
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 
-# --- 2. รายชื่อ 30 เหรียญ (Binance Watchlist) เรียง A -> Z ---
-WATCHLIST = sorted([
-    "AAVE", "ADA", "APT", "ARB", "AVAX",
-    "BCH", "BNB", "BTC", "DOGE", "DOT",
-    "ENA", "ETH", "FET", "INJ", "LINK",
-    "LTC", "NEAR", "ONDO", "OP", "PAXG",
-    "PENDLE", "RENDER", "SEI", "SOL", "SUI",
-    "TAO", "TIA", "UNI", "XLM", "XRP"
-])
+WATCHLIST = [
+    "BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "LTCUSDT", "BCHUSDT",
+    "PAXGUSDT", "ONDOUSDT", "LINKUSDT", "PENDLEUSDT", "AAVEUSDT",
+    "TAOUSDT", "NEARUSDT", "FETUSDT", "RENDERUSDT", "WLDUSDT", "ARKMUSDT",
+    "SUIUSDT", "APTUSDT", "SEIUSDT", "INJUSDT", "TIAUSDT", "PYTHUSDT",
+    "JUPUSDT", "ENAUSDT", "UNIUSDT", "STXUSDT",
+    "XRPUSDT", "DOGEUSDT", "PEPEUSDT"
+]
 
 def get_binance_candles_4h(coin):
     """ดึงข้อมูลแท่งเทียน 4H จำนวน 500 แท่งตรงจาก Binance Public API"""
