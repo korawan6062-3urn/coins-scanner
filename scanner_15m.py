@@ -19,7 +19,7 @@ WATCHLIST = [
 ]
 
 def get_binance_candles_15m(symbol, limit=200):
-    """ดึงแท่งเทียน 15M จาก Binance Vision Spot API (ขยายเป็น 200 แท่งเพื่อความแม่นยำของ EMA 89)"""
+    """ดึงแท่งเทียน 15M จาก Binance Vision Spot API"""
     endpoints = [
         f"https://data-api.binance.vision/api/v3/klines?symbol={symbol}&interval=15m&limit={limit}",
         f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval=15m&limit={limit}"
@@ -40,19 +40,16 @@ def get_binance_candles_15m(symbol, limit=200):
             continue
     return None
 
-def analyze_events(df):
-    """คำนวณ MACD (12, 26, 9) และ EMA 89 ตรวจจับเฉพาะ Event จุดสัมผัส"""
+def analyze_macd_and_ema(df):
+    """คำนวณ MACD (12, 26, 9) และ EMA 89 ตรวจจับ Event"""
     try:
-        # 1. MACD Calculation
         exp1 = df["close"].ewm(span=12, adjust=False).mean()
         exp2 = df["close"].ewm(span=26, adjust=False).mean()
         macd = exp1 - exp2
         signal = macd.ewm(span=9, adjust=False).mean()
 
-        # 2. EMA 89 Calculation
         ema89 = df["close"].ewm(span=89, adjust=False).mean()
 
-        # แท่งที่ปิดสมบูรณ์ล่าสุด (iloc[-2]) และแท่งก่อนหน้า (iloc[-3])
         m_curr, s_curr = macd.iloc[-2], signal.iloc[-2]
         m_prev, s_prev = macd.iloc[-3], signal.iloc[-3]
 
@@ -63,7 +60,6 @@ def analyze_events(df):
 
         events = []
 
-        # --- ตรวจจับ MACD Events ---
         if m_prev <= s_prev and m_curr > s_curr:
             events.append("GOLDEN_CROSS")
         elif m_prev >= s_prev and m_curr < s_curr:
@@ -74,9 +70,10 @@ def analyze_events(df):
         elif m_prev >= 0 and m_curr < 0:
             events.append("UNDER_0")
 
-        # --- ตรวจจับ EMA 89 Touch Events ---
+        # แตะรับ: แท่งก่อนหน้าลอยเหนือเส้น -> แท่งนี้ย่อลงมาแตะเส้น
         if low_prev > ema_prev and low_curr <= ema_curr:
             events.append("TOUCH_SUPPORT")
+        # แตะต้าน: แท่งก่อนหน้าจมใต้เส้น -> แท่งนี้เด้งขึ้นไปแตะเส้น
         elif high_prev < ema_prev and high_curr >= ema_curr:
             events.append("TOUCH_RESIST")
 
@@ -84,8 +81,49 @@ def analyze_events(df):
     except Exception:
         return []
 
+def analyze_pivots(df, left=10, right=10):
+    """ตรวจจับ Pivot Point Period = 10 ให้ตรงกับ Indicator A.Aun บน TradingView"""
+    try:
+        highs = df["high"].values
+        lows = df["low"].values
+        n = len(df)
+        
+        pivot_highs = []
+        pivot_lows = []
+
+        for i in range(left, n - right):
+            if all(highs[i] >= highs[i - k] for k in range(1, left + 1)) and \
+               all(highs[i] > highs[i + k] for k in range(1, right + 1)):
+                pivot_highs.append((i, highs[i]))
+
+            if all(lows[i] <= lows[i - k] for k in range(1, left + 1)) and \
+               all(lows[i] < lows[i + k] for k in range(1, right + 1)):
+                pivot_lows.append((i, lows[i]))
+
+        events = []
+
+        # High ล่าสุด vs High ก่อนหน้า
+        if len(pivot_highs) >= 2:
+            curr_ph = pivot_highs[-1][1]
+            prev_ph = pivot_highs[-2][1]
+            ph_idx = pivot_highs[-1][0]
+            if ph_idx == (n - right - 1):
+                events.append("HH" if curr_ph > prev_ph else "LH")
+
+        # Low ล่าสุด vs Low ก่อนหน้า
+        if len(pivot_lows) >= 2:
+            curr_pl = pivot_lows[-1][1]
+            prev_pl = pivot_lows[-2][1]
+            pl_idx = pivot_lows[-1][0]
+            if pl_idx == (n - right - 1):
+                events.append("HL" if curr_pl > prev_pl else "LL")
+
+        return events
+    except Exception:
+        return []
+
 def send_telegram(message):
-    """ส่งแจ้งเตือนเข้า Telegram"""
+    """ส่งแจ้งเตือนเข้า Telegram พร้อม Fallback"""
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
         print("Error: Missing Telegram Secrets")
         return
@@ -102,7 +140,7 @@ def send_telegram(message):
         print(f"Telegram Exception: {e}")
 
 def main():
-    print("Scanning 15M MACD & EMA 89 Events...")
+    print("Scanning 15M Indicators & Pivot Structure (Period 10)...")
 
     results = {
         "GOLDEN_CROSS": [],
@@ -110,44 +148,63 @@ def main():
         "OVER_0": [],
         "UNDER_0": [],
         "TOUCH_SUPPORT": [],
-        "TOUCH_RESIST": []
+        "TOUCH_RESIST": [],
+        "HH": [],
+        "HL": [],
+        "LH": [],
+        "LL": []
     }
 
     for symbol in WATCHLIST:
         df = get_binance_candles_15m(symbol, limit=200)
         if df is not None:
-            evs = analyze_events(df)
-            for ev in evs:
+            for ev in analyze_macd_and_ema(df):
                 if ev in results:
                     results[ev].append(symbol)
+            for pv in analyze_pivots(df, left=10, right=10):
+                if pv in results:
+                    results[pv].append(symbol)
         time.sleep(0.03)
 
     def fmt(lst):
-        return "  " + ", ".join(lst) if lst else "  • ไม่มี"
+        return "  • " + ", ".join(lst) if lst else "  • ไม่มี"
 
     msg = [
-        "⚡️ *[15M MACD & EMA 89 TRIGGER]*",
-        "────────────────────────",
-        f"🟢 *GOLDEN CROSS [{len(results['GOLDEN_CROSS'])}]*",
+        "⚡️ *[15M SCANNER: MOMENTUM & STRUCTURE]*",
+        "────────────────────────────",
+        f"🟢 *GOLDEN CROSS (MACD ตัดขึ้น) [{len(results['GOLDEN_CROSS'])}]*",
         fmt(results["GOLDEN_CROSS"]),
         "",
-        f"🔴 *DEATH CROSS [{len(results['DEATH_CROSS'])}]*",
+        f"🔴 *DEATH CROSS (MACD ตัดลง) [{len(results['DEATH_CROSS'])}]*",
         fmt(results["DEATH_CROSS"]),
         "",
-        f"🚀 *OVER 0 [{len(results['OVER_0'])}]*",
+        f"🚀 *OVER 0 (MACD ข้ามศูนย์ขึ้น) [{len(results['OVER_0'])}]*",
         fmt(results["OVER_0"]),
         "",
-        f"🔻 *UNDER 0 [{len(results['UNDER_0'])}]*",
+        f"🔻 *UNDER 0 (MACD มุดศูนย์ลง) [{len(results['UNDER_0'])}]*",
         fmt(results["UNDER_0"]),
-        "────────────────────────",
+        "────────────────────────────",
         "🎯 *EMA 89 TOUCH (เพิ่งแตะเส้นแท่งแรก):*",
         f"📥 *ย่อแตะรับ (Touch Support) [{len(results['TOUCH_SUPPORT'])}]:*",
         fmt(results["TOUCH_SUPPORT"]),
         "",
         f"📤 *เด้งแตะต้าน (Touch Resist) [{len(results['TOUCH_RESIST'])}]:*",
         fmt(results["TOUCH_RESIST"]),
-        "────────────────────────",
-        "📌 *Action:* เปิด 5M ดูโครงสร้างแท่งเทียนกลับตัวบริเวณ EMA 89"
+        "────────────────────────────",
+        "📐 *PIVOT STRUCTURE (โครงสร้างคลื่น Period 10):*",
+        f"📈 *HH (ยอดสูงขึ้น) [{len(results['HH'])}]:* ➔ พุ่งแรง ห้ามไล่ราคา รอ 5M ย่อ",
+        fmt(results["HH"]),
+        "",
+        f"🔼 *HL (ยกก้นสูงขึ้น) [{len(results['HL'])}]:* ➔ ย่อจบแล้ว จังหวะดัก BUY (Long)",
+        fmt(results["HL"]),
+        "",
+        f"📉 *LH (ยอดต่ำลง) [{len(results['LH'])}]:* ➔ เด้งไม่ผ่านยอด จังหวะดัก SELL (Short)",
+        fmt(results["LH"]),
+        "",
+        f"🔽 *LL (ทำก้นต่ำลง) [{len(results['LL'])}]:* ➔ หลุดก้นเดิม ห้ามกดตาม รอเด้งก่อน",
+        fmt(results["LL"]),
+        "────────────────────────────",
+        "📌 *Action:* เช็กเทรนด์ 4H ➔ เปิด 5M รอเข้าโซน EMA 21/35 หรือ EMA 89"
     ]
 
     send_telegram("\n".join(msg))
