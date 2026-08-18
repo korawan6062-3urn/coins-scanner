@@ -18,8 +18,8 @@ WATCHLIST = [
     "XRPUSDT", "DOGEUSDT", "PEPEUSDT"
 ]
 
-def get_binance_candles_15m(symbol, limit=120):
-    """ดึงแท่งเทียน 15M จาก Binance Vision Spot API"""
+def get_binance_candles_15m(symbol, limit=200):
+    """ดึงแท่งเทียน 15M จาก Binance Vision Spot API (ขยายเป็น 200 แท่งเพื่อความแม่นยำของ EMA 89)"""
     endpoints = [
         f"https://data-api.binance.vision/api/v3/klines?symbol={symbol}&interval=15m&limit={limit}",
         f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval=15m&limit={limit}"
@@ -74,12 +74,9 @@ def analyze_events(df):
         elif m_prev >= 0 and m_curr < 0:
             events.append("UNDER_0")
 
-        # --- ตรวจจับ EMA 89 Touch Events (เพิ่งแตะแท่งนี้เป็นแท่งแรก) ---
-        # 1. แตะแนวรับ: แท่งก่อนหน้าลอยอยู่เหนือเส้น -> แท่งนี้ย่อลงมาแตะ/แทงทะลุเส้น
+        # --- ตรวจจับ EMA 89 Touch Events ---
         if low_prev > ema_prev and low_curr <= ema_curr:
             events.append("TOUCH_SUPPORT")
-
-        # 2. แตะแนวต้าน: แท่งก่อนหน้าจมอยู่ใต้เส้น -> แท่งนี้เด้งขึ้นไปแตะ/แทงทะลุเส้น
         elif high_prev < ema_prev and high_curr >= ema_curr:
             events.append("TOUCH_RESIST")
 
@@ -117,7 +114,7 @@ def main():
     }
 
     for symbol in WATCHLIST:
-        df = get_binance_candles_15m(symbol, limit=120)
+        df = get_binance_candles_15m(symbol, limit=200)
         if df is not None:
             evs = analyze_events(df)
             for ev in evs:
