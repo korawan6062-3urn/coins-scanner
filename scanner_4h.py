@@ -18,9 +18,8 @@ WATCHLIST = [
     "XRPUSDT", "DOGEUSDT", "PEPEUSDT"
 ]
 
-def get_binance_candles_4h(coin):
-    """ดึงข้อมูลแท่งเทียน 4H จำนวน 500 แท่งตรงจาก Binance Public API"""
-    symbol = f"{coin}USDT"
+def get_binance_candles_4h(symbol):
+    """ดึงข้อมูลแท่งเทียน 4H ตรงจาก Binance Public API"""
     endpoints = [
         f"https://data-api.binance.vision/api/v3/klines?symbol={symbol}&interval=4h&limit=500",
         f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval=4h&limit=500"
@@ -106,9 +105,8 @@ def main():
     sell_list = []
     unknown_list = []
 
-    for coin in WATCHLIST:
-        df = get_binance_candles_4h(coin)
-        sym = f"{coin}USDT"
+    for sym in WATCHLIST:
+        df = get_binance_candles_4h(sym)
 
         if df is None:
             unknown_list.append(sym)
