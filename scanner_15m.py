@@ -82,7 +82,7 @@ def analyze_macd_and_ema(df):
         return []
 
 def analyze_pivots(df, left=10, right=10):
-    """ตรวจจับ Pivot Point Period = 10 ให้ตรงกับ Indicator A.Aun บน TradingView"""
+    """ตรวจจับ Pivot Structure Period 10 (HH, HL, LH, LL)"""
     try:
         highs = df["high"].values
         lows = df["low"].values
@@ -102,7 +102,6 @@ def analyze_pivots(df, left=10, right=10):
 
         events = []
 
-        # High ล่าสุด vs High ก่อนหน้า
         if len(pivot_highs) >= 2:
             curr_ph = pivot_highs[-1][1]
             prev_ph = pivot_highs[-2][1]
@@ -110,7 +109,6 @@ def analyze_pivots(df, left=10, right=10):
             if ph_idx == (n - right - 1):
                 events.append("HH" if curr_ph > prev_ph else "LH")
 
-        # Low ล่าสุด vs Low ก่อนหน้า
         if len(pivot_lows) >= 2:
             curr_pl = pivot_lows[-1][1]
             prev_pl = pivot_lows[-2][1]
@@ -123,7 +121,7 @@ def analyze_pivots(df, left=10, right=10):
         return []
 
 def send_telegram(message):
-    """ส่งแจ้งเตือนเข้า Telegram พร้อม Fallback"""
+    """ส่งแจ้งเตือนเข้า Telegram"""
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
         print("Error: Missing Telegram Secrets")
         return
@@ -140,7 +138,7 @@ def send_telegram(message):
         print(f"Telegram Exception: {e}")
 
 def main():
-    print("Scanning 15M Indicators & Pivot Structure (Period 10)...")
+    print("Scanning 15M MACD, EMA 89 & Pivots...")
 
     results = {
         "GOLDEN_CROSS": [],
@@ -170,41 +168,41 @@ def main():
         return "  • " + ", ".join(lst) if lst else "  • ไม่มี"
 
     msg = [
-        "⚡️ *[15M SCANNER: MOMENTUM & STRUCTURE]*",
+        "⚡️ *[15M SCANNER & STRUCTURE]*",
         "────────────────────────────",
-        f"🟢 *GOLDEN CROSS (MACD ตัดขึ้น) [{len(results['GOLDEN_CROSS'])}]*",
+        "🟢 *GOLDEN CROSS :* ➔ ซูม 5M หาจังหวะ BUY",
         fmt(results["GOLDEN_CROSS"]),
         "",
-        f"🔴 *DEATH CROSS (MACD ตัดลง) [{len(results['DEATH_CROSS'])}]*",
+        "🔴 *DEATH CROSS  :* ➔ ซูม 5M หาจังหวะ SELL",
         fmt(results["DEATH_CROSS"]),
         "",
-        f"🚀 *OVER 0 (MACD ข้ามศูนย์ขึ้น) [{len(results['OVER_0'])}]*",
+        "🚀 *OVER 0       :* ➔ โมเมนตัมขึ้นแข็งแกร่ง",
         fmt(results["OVER_0"]),
         "",
-        f"🔻 *UNDER 0 (MACD มุดศูนย์ลง) [{len(results['UNDER_0'])}]*",
+        "🔻 *UNDER 0      :* ➔ โมเมนตัมลงแข็งแกร่ง",
         fmt(results["UNDER_0"]),
         "────────────────────────────",
-        "🎯 *EMA 89 TOUCH (เพิ่งแตะเส้นแท่งแรก):*",
-        f"📥 *ย่อแตะรับ (Touch Support) [{len(results['TOUCH_SUPPORT'])}]:*",
+        "🎯 *EMA 89 TOUCH :*",
+        "📥 *แตะรับ       :* ➔ ซูม 5M ดูแท่งกลับตัวโซนรับ",
         fmt(results["TOUCH_SUPPORT"]),
         "",
-        f"📤 *เด้งแตะต้าน (Touch Resist) [{len(results['TOUCH_RESIST'])}]:*",
+        "📤 *แตะต้าน      :* ➔ ซูม 5M ดูแท่งกลับตัวโซนต้าน",
         fmt(results["TOUCH_RESIST"]),
         "────────────────────────────",
-        "📐 *PIVOT STRUCTURE (โครงสร้างคลื่น Period 10):*",
-        f"📈 *HH (ยอดสูงขึ้น) [{len(results['HH'])}]:* ➔ พุ่งแรง ห้ามไล่ราคา รอ 5M ย่อ",
+        "📐 *PIVOT (P10)  :*",
+        "📈 *HH           :* ➔ ห้ามไล่ รอ 15M ทำ HL",
         fmt(results["HH"]),
         "",
-        f"🔼 *HL (ยกก้นสูงขึ้น) [{len(results['HL'])}]:* ➔ ย่อจบแล้ว จังหวะดัก BUY (Long)",
+        "🔼 *HL           :* ➔ ย่อจบ ซูม 5M เคาะ BUY",
         fmt(results["HL"]),
         "",
-        f"📉 *LH (ยอดต่ำลง) [{len(results['LH'])}]:* ➔ เด้งไม่ผ่านยอด จังหวะดัก SELL (Short)",
+        "📉 *LH           :* ➔ เด้งจบ ซูม 5M เคาะ SELL",
         fmt(results["LH"]),
         "",
-        f"🔽 *LL (ทำก้นต่ำลง) [{len(results['LL'])}]:* ➔ หลุดก้นเดิม ห้ามกดตาม รอเด้งก่อน",
+        "🔽 *LL           :* ➔ ห้ามตาม รอ 15M เด้งทำ LH",
         fmt(results["LL"]),
         "────────────────────────────",
-        "📌 *Action:* เช็กเทรนด์ 4H ➔ เปิด 5M รอเข้าโซน EMA 21/35 หรือ EMA 89"
+        "📌 *Check:* 4H เมฆ ➔ 15M Signal ➔ 5M Entry"
     ]
 
     send_telegram("\n".join(msg))
