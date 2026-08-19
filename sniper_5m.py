@@ -4,7 +4,9 @@ import pandas as pd
 import numpy as np
 import time
 
-# --- 1. ดึง Token และ Chat ID จาก GitHub Secrets / Environment ---
+# ==========================================
+# 1. Config & Environment Variables
+# ==========================================
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
@@ -19,8 +21,11 @@ WATCHLIST = [
 
 MIN_SPREAD_PCT = 0.12  # ตัวกรองพัดบีบแคบ / Sideway (0.12%)
 
+# ==========================================
+# 2. Fetch Binance 5M Data
+# ==========================================
 def get_binance_candles_5m(symbol, limit=200):
-    """ดึงแท่งเทียน 5M จาก Binance Vision / Binance Spot API"""
+    """ดึงแท่งเทียน 5M จาก Binance API"""
     endpoints = [
         f"https://data-api.binance.vision/api/v3/klines?symbol={symbol}&interval=5m&limit={limit}",
         f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval=5m&limit={limit}"
@@ -41,49 +46,47 @@ def get_binance_candles_5m(symbol, limit=200):
             continue
     return None
 
+# ==========================================
+# 3. Pure EMA Sniper Engine
+# ==========================================
 def analyze_5m_sniper(df):
-    """ตรวจจับจุดยิงสไนเปอร์ พร้อมแยก Plan A (Retest 21/35) และ Plan B (Re-break 89)"""
+    """ตรวจจับจุดยิงสไนเปอร์แบบ Pure EMA + Price Action (ไร้ MACD Lag)"""
     try:
         df["ema21"] = df["close"].ewm(span=21, adjust=False).mean()
         df["ema35"] = df["close"].ewm(span=35, adjust=False).mean()
         df["ema89"] = df["close"].ewm(span=89, adjust=False).mean()
         df["ema200"] = df["close"].ewm(span=200, adjust=False).mean()
 
-        # MACD (12, 26, 9)
-        ema12 = df["close"].ewm(span=12, adjust=False).mean()
-        ema26 = df["close"].ewm(span=26, adjust=False).mean()
-        df["macd"] = ema12 - ema26
-
-        curr = df.iloc[-2]  # แท่งปิดสมบูรณ์ล่าสุด
+        curr = df.iloc[-2]  # ตรวจเฉพาะแท่งที่ปิดสมบูรณ์แล้ว
 
         ema21_v = curr["ema21"]
         ema35_v = curr["ema35"]
         ema89_v = curr["ema89"]
         ema200_v = curr["ema200"]
-        macd_v = curr["macd"]
 
         open_p = curr["open"]
         close_p = curr["close"]
         high_p = curr["high"]
         low_p = curr["low"]
 
-        # ตัวกรองพัดกาง
+        # ตัวกรองพัดกาง (Spread ระหว่าง EMA 21 กับ 89 >= 0.12%)
         spread_pct = (abs(ema21_v - ema89_v) / ema89_v) * 100
         is_expanded = spread_pct >= MIN_SPREAD_PCT
 
+        # สภาพพัดกางสมบูรณ์ (สวรรค์แท้ / นรกแท้)
         is_bull_fan = (ema21_v > ema35_v > ema89_v > ema200_v) and is_expanded
         is_bear_fan = (ema21_v < ema35_v < ema89_v < ema200_v) and is_expanded
 
         # ----------------------------------------------------
         # 🟢 ฝั่ง BUY (LONG)
         # ----------------------------------------------------
-        if is_bull_fan and (macd_v > 0):
-            # Plan A: ย่อแตะแถบ 21/35 แล้วปิดเขียวเหนือ 21
+        if is_bull_fan:
+            # Plan A: ย่อแตะแถบ 21/35 แล้วปิดแท่งเขียวเหนือ 21
             touch_a = (low_p <= max(ema21_v, ema35_v)) and (high_p >= min(ema21_v, ema35_v))
             if touch_a and (close_p > open_p) and (close_p > ema21_v):
                 return "BUY", "Plan A"
 
-            # Plan B: ย่อลึกเทส 89 แล้วปิดแท่งตลบกลับขึ้นมายืนเหนือ 21/35
+            # Plan B: ย่อลึกเทส 89 (ไส้แตะ 89) แล้วปิดแท่งตลบกลับมายืนเหนือ 21/35
             touch_b = (low_p <= ema89_v) and (close_p > ema89_v)
             if touch_b and (close_p > max(ema21_v, ema35_v)):
                 return "BUY", "Plan B"
@@ -91,13 +94,13 @@ def analyze_5m_sniper(df):
         # ----------------------------------------------------
         # 🔴 ฝั่ง SELL (SHORT)
         # ----------------------------------------------------
-        if is_bear_fan and (macd_v < 0):
-            # Plan A: เด้งแตะแถบ 21/35 แล้วปิดแดงใต้ 21
+        if is_bear_fan:
+            # Plan A: เด้งแตะแถบ 21/35 แล้วปิดแท่งแดงใต้ 21
             touch_a = (high_p >= min(ema21_v, ema35_v)) and (low_p <= max(ema21_v, ema35_v))
             if touch_a and (close_p < open_p) and (close_p < ema21_v):
                 return "SELL", "Plan A"
 
-            # Plan B: เด้งลึกเทส 89 แล้วปิดแท่งมุดกลับลงมาใต้ 21/35
+            # Plan B: เด้งลึกเทส 89 (ไส้แตะ 89) แล้วปิดแท่งมุดกลับลงมาใต้ 21/35
             touch_b = (high_p >= ema89_v) and (close_p < ema89_v)
             if touch_b and (close_p < min(ema21_v, ema35_v)):
                 return "SELL", "Plan B"
@@ -106,6 +109,9 @@ def analyze_5m_sniper(df):
     except Exception:
         return None, None
 
+# ==========================================
+# 4. Telegram Notification
+# ==========================================
 def send_telegram(message):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
         print("Error: Missing Telegram Credentials")
@@ -122,8 +128,11 @@ def send_telegram(message):
     except Exception as e:
         print(f"Telegram Exception: {e}")
 
+# ==========================================
+# 5. Main Execution
+# ==========================================
 def main():
-    print("Scanning 5M Entry Triggers (Plan A / B)...")
+    print("Scanning 5M Pure EMA Sniper Triggers...")
 
     buy_signals = []
     sell_signals = []
@@ -138,7 +147,7 @@ def main():
                 sell_signals.append(f"{symbol} [{plan}]")
         time.sleep(0.03)
 
-    # ไม่ส่งข้อความหากไม่มีสัญญาณเข้าเงื่อนไข
+    # หากไม่มีสัญญาณเข้าเงื่อนไข จะจบการทำงานทันทีโดยไม่ส่งข้อความ
     if not buy_signals and not sell_signals:
         print("No sniper setups found. Telegram skipped.")
         return
@@ -147,7 +156,7 @@ def main():
         return "\n".join([f"  • {item}" for item in lst]) if lst else "  • ไม่มี"
 
     msg = [
-        "🎯 *[5M SNIPER ENTRY TRIGGER]*",
+        "🎯 *[5M PURE EMA SNIPER TRIGGER]*",
         "────────────────────────────",
         "🟢 *BUY SNIPER (เคาะ Market BUY) :*",
         fmt(buy_signals),
