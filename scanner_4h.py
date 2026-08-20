@@ -21,6 +21,7 @@ WATCHLIST = [
     # --- DeFi & Real World Assets (เรียง A-Z) ---
     "AAVEUSDT",
     "ENAUSDT",
+    "HYPEUSDT",
     "JUPUSDT",
     "LINKUSDT",
     "ONDOUSDT",
@@ -41,6 +42,7 @@ WATCHLIST = [
     "TIAUSDT",
 
     # --- Legacy & เพิ่มเติม (เรียง A-Z) ---
+    "KASUSDT",
     "LTCUSDT",
     "ZECUSDT",
 ]
