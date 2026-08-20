@@ -1,9 +1,7 @@
 import os
-import sys
+import time
 import requests
 import pandas as pd
-import numpy as np
-import time
 
 # ======================== 1. CONFIGURATION & SECRETS ========================
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("TELEGRAM_TOKEN", "")
@@ -45,69 +43,63 @@ WATCHLIST = [
     "ZECUSDT",
 ]
 
-# ======================== 2. DATA FETCHERS (BINANCE / GATE.IO / KUCOIN) ========================
+# ======================== 2. DATA FETCHER ROUTER ========================
 def get_binance_candles_4h(symbol):
-    """ดึงแท่งเทียน 4H จาก Binance (Futures -> Spot Vision -> Spot Public)"""
+    """ดึงแท่งเทียน 4H จาก Binance (ข้าม XAUUSDT อัตโนมัติเพราะไม่มีใน Binance)"""
+    if symbol == "XAUUSDT":
+        return None
+        
     endpoints = [
-        f"https://fapi.binance.com/fapi/v1/klines?symbol={symbol}&interval=4h&limit=200",
-        f"https://data-api.binance.vision/api/v3/klines?symbol={symbol}&interval=4h&limit=200",
-        f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval=4h&limit=200"
+        f"https://fapi.binance.com/fapi/v1/klines?symbol={symbol}&interval=4h&limit=150",
+        f"https://data-api.binance.vision/api/v3/klines?symbol={symbol}&interval=4h&limit=150",
+        f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval=4h&limit=150"
     ]
     for url in endpoints:
         try:
-            res = requests.get(url, timeout=10).json()
+            res = requests.get(url, timeout=8).json()
             if isinstance(res, list) and len(res) >= 60:
                 df = pd.DataFrame(res, columns=[
                     "open_time", "open", "high", "low", "close", "volume",
-                    "close_time", "quote_volume", "trades", "taker_buy_base",
-                    "taker_buy_quote", "ignore"
+                    "close_time", "q_vol", "trades", "tb_base", "tb_quote", "ignore"
                 ])
-                for col in ["open", "high", "low", "close", "volume", "open_time"]:
+                for col in ["high", "low", "close"]:
                     df[col] = pd.to_numeric(df[col], errors="coerce")
-                return df.sort_values(by="open_time").dropna().reset_index(drop=True)
+                return df[["high", "low", "close"]].dropna().reset_index(drop=True)
         except Exception:
             continue
     return None
 
 def get_gateio_candles_4h(symbol):
-    """ดึงแท่งเทียน 4H จาก Gate.io API (รองรับทั้ง Spot และ Futures)"""
+    """ดึงแท่งเทียน 4H จาก Gate.io (รองรับทั้ง XAU_USDT และเหรียญ Spot/Futures)"""
     base_sym = symbol[:-4] if symbol.endswith("USDT") else symbol
     pair = f"{base_sym}_USDT"
     
     endpoints = [
-        f"https://api.gateio.ws/api/v4/futures/usdt/candlesticks?contract={pair}&interval=4h&limit=200",
-        f"https://api.gateio.ws/api/v4/spot/candlesticks?currency_pair={pair}&interval=4h&limit=200"
+        f"https://api.gateio.ws/api/v4/futures/usdt/candlesticks?contract={pair}&interval=4h&limit=150",
+        f"https://api.gateio.ws/api/v4/spot/candlesticks?currency_pair={pair}&interval=4h&limit=150"
     ]
     headers = {"User-Agent": "Mozilla/5.0"}
     
     for url in endpoints:
         try:
-            res = requests.get(url, headers=headers, timeout=10).json()
+            res = requests.get(url, headers=headers, timeout=8).json()
             if isinstance(res, list) and len(res) >= 60:
                 records = []
                 for item in res:
-                    # Futures format: dict / Spot format: list [t, v, c, h, l, o, ...]
                     if isinstance(item, dict):
                         records.append({
-                            "open_time": float(item.get("t", 0)) * 1000,
-                            "open": float(item.get("o", 0)),
                             "high": float(item.get("h", 0)),
                             "low": float(item.get("l", 0)),
-                            "close": float(item.get("c", 0)),
-                            "volume": float(item.get("v", 0))
+                            "close": float(item.get("c", 0))
                         })
                     elif isinstance(item, list) and len(item) >= 6:
                         records.append({
-                            "open_time": float(item[0]) * 1000,
-                            "open": float(item[5]),
                             "high": float(item[3]),
                             "low": float(item[4]),
-                            "close": float(item[2]),
-                            "volume": float(item[6]) if len(item) > 6 else float(item[1])
+                            "close": float(item[2])
                         })
                 if records:
-                    df = pd.DataFrame(records)
-                    return df.sort_values(by="open_time").dropna().reset_index(drop=True)
+                    return pd.DataFrame(records).dropna().reset_index(drop=True)
         except Exception:
             continue
     return None
@@ -115,30 +107,21 @@ def get_gateio_candles_4h(symbol):
 def get_kucoin_candles_4h(symbol):
     """ดึงแท่งเทียน 4H จาก KuCoin Public API"""
     base_sym = symbol[:-4] if symbol.endswith("USDT") else symbol
-    kucoin_sym = f"{base_sym}-USDT"
-    url = f"https://api.kucoin.com/api/v1/market/candles?type=4hour&symbol={kucoin_sym}"
+    url = f"https://api.kucoin.com/api/v1/market/candles?type=4hour&symbol={base_sym}-USDT"
     headers = {"User-Agent": "Mozilla/5.0"}
     try:
-        res = requests.get(url, headers=headers, timeout=10).json()
+        res = requests.get(url, headers=headers, timeout=8).json()
         if res.get("code") == "200000" and "data" in res and len(res["data"]) >= 60:
-            records = []
-            for item in res["data"]:
-                records.append({
-                    "open_time": float(item[0]) * 1000,
-                    "open": float(item[1]),
-                    "close": float(item[2]),
-                    "high": float(item[3]),
-                    "low": float(item[4]),
-                    "volume": float(item[5])
-                })
+            records = [{"close": float(i[2]), "high": float(i[3]), "low": float(i[4])} for i in res["data"]]
             df = pd.DataFrame(records)
-            return df.sort_values(by="open_time").dropna().reset_index(drop=True)
+            # KuCoin คืนข้อมูลเรียงจากใหม่ออกไปเก่า ต้องกลับลำดับ
+            return df.iloc[::-1].reset_index(drop=True)
     except Exception as e:
         print(f"[!] KuCoin API Error ({symbol}): {e}")
     return None
 
 def get_market_candles_4h(symbol):
-    """Router ดึงแท่งเทียนอัตโนมัติ: Binance -> Gate.io -> KuCoin"""
+    """Router ดึงข้อมูลอัตโนมัติ: Binance -> Gate.io -> KuCoin"""
     df = get_binance_candles_4h(symbol)
     if df is not None:
         return df
@@ -180,7 +163,7 @@ def analyze_4h_cloud(df):
 
 # ======================== 4. FORMATTING & NOTIFICATION ========================
 def format_grid(coins, cols=3):
-    """จัดเรียงรายชื่อเหรียญแถวละ 3 ตัว ล็อกความกว้างช่องละ 11 ตัวอักษร"""
+    """จัดเรียงแถวละ 3 ตัว ล็อกความกว้างช่องละ 11 ตัวอักษร"""
     if not coins:
         return "  • ไม่มี"
     rows = []
@@ -191,9 +174,9 @@ def format_grid(coins, cols=3):
     return "\n".join(rows)
 
 def send_telegram(message):
-    """ส่งข้อความแจ้งเตือนเข้า Telegram พร้อม Fallback ป้องกัน Markdown หลุด"""
+    """ส่งรายงานเข้า Telegram"""
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
-        print("[!] Error: ไม่พบ TELEGRAM_TOKEN หรือ TELEGRAM_CHAT_ID ใน Secrets")
+        print("[!] Error: ไม่พบ Secret Telegram")
         return
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     payload = {
@@ -211,21 +194,19 @@ def send_telegram(message):
             }
             requests.post(url, json=payload_plain, timeout=10)
     except Exception as e:
-        print(f"[!] Telegram API error: {e}")
+        print(f"[!] Telegram Error: {e}")
 
-# ======================== 5. MAIN EXECUTION ========================
+# ======================== 5. MAIN ========================
 def main():
-    print("🚀 เริ่มต้นสแกน TF 4H (Pure Cloud)...")
-    buy_list = []
-    sell_list = []
-    unknown_list = []
+    print("🚀 เริ่มสแกน TF 4H Pure Kumo (Clean Build)...")
+    buy_list, sell_list, unknown_list = [], [], []
 
     for sym in WATCHLIST:
         df = get_market_candles_4h(sym)
 
         if df is None:
             unknown_list.append(sym)
-            print(f"[{sym}] ⚠️ ไม่สามารถดึงข้อมูลได้ -> UNKNOWN")
+            print(f"[{sym}] ⚠️ Data Error -> UNKNOWN")
             continue
 
         status = analyze_4h_cloud(df)
@@ -242,6 +223,10 @@ def main():
 
         time.sleep(0.05)
 
+    buy_list.sort()
+    sell_list.sort()
+    unknown_list.sort()
+
     msg = [
         "📊 *สรุปภาพรวมเหรียญ TF 4H (Pure Cloud)*",
         "────────────────────────",
@@ -257,7 +242,7 @@ def main():
     ]
 
     send_telegram("\n".join(msg))
-    print("✅ สแกน 4H เสร็จสิ้นและส่งแจ้งเตือนสำเร็จ")
+    print("✅ สแกน 4H เสร็จสิ้นและส่งแจ้งเตือนเรียบร้อย")
 
 if __name__ == "__main__":
     main()
