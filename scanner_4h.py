@@ -15,13 +15,12 @@ WATCHLIST = [
     "BTCUSDT",
     "ETHUSDT",
     "SOLUSDT",
-    "XAUUSDT.P",
+    "XAUUSD",
     "XRPUSDT",
 
     # --- DeFi & Real World Assets (เรียง A-Z) ---
     "AAVEUSDT",
     "ENAUSDT",
-    "HYPEUSDT",
     "JUPUSDT",
     "LINKUSDT",
     "ONDOUSDT",
@@ -42,7 +41,6 @@ WATCHLIST = [
     "TIAUSDT",
 
     # --- เพิ่มเติม / แก้ไขในอนาคต (เรียง A-Z) ---
-    "KASUSDT",
     "LTCUSDT",
     "ZECUSDT",
 ]
