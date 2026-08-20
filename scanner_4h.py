@@ -4,7 +4,7 @@ import requests
 import pandas as pd
 
 # ======================== 1. CONFIGURATION & SECRETS ========================
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("TELEGRAM_TOKEN", "")
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 
 WATCHLIST = [
