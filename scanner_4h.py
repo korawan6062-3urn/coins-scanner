@@ -15,13 +15,12 @@ WATCHLIST = [
     "BTCUSDT",
     "ETHUSDT",
     "SOLUSDT",
-    "XAUUSD",
+    "XAUUSDT",
     "XRPUSDT",
 
     # --- DeFi & Real World Assets (เรียง A-Z) ---
     "AAVEUSDT",
     "ENAUSDT",
-    "HYPEUSDT",
     "JUPUSDT",
     "LINKUSDT",
     "ONDOUSDT",
@@ -42,7 +41,6 @@ WATCHLIST = [
     "TIAUSDT",
 
     # --- Legacy & เพิ่มเติม (เรียง A-Z) ---
-    "KASUSDT",
     "LTCUSDT",
     "ZECUSDT",
 ]
@@ -50,11 +48,10 @@ WATCHLIST = [
 # ======================== 2. DATA FETCHERS (BINANCE / GATE.IO / KUCOIN) ========================
 def get_binance_candles_4h(symbol):
     """ดึงแท่งเทียน 4H จาก Binance (Futures -> Spot Vision -> Spot Public)"""
-    binance_sym = "PAXGUSDT" if symbol in ["XAUUSD", "XAU_USD"] else symbol
     endpoints = [
-        f"https://fapi.binance.com/fapi/v1/klines?symbol={binance_sym}&interval=4h&limit=200",
-        f"https://data-api.binance.vision/api/v3/klines?symbol={binance_sym}&interval=4h&limit=200",
-        f"https://api.binance.com/api/v3/klines?symbol={binance_sym}&interval=4h&limit=200"
+        f"https://fapi.binance.com/fapi/v1/klines?symbol={symbol}&interval=4h&limit=200",
+        f"https://data-api.binance.vision/api/v3/klines?symbol={symbol}&interval=4h&limit=200",
+        f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval=4h&limit=200"
     ]
     for url in endpoints:
         try:
@@ -73,39 +70,57 @@ def get_binance_candles_4h(symbol):
     return None
 
 def get_gateio_candles_4h(symbol):
-    """ดึงแท่งเทียน 4H จาก Gate.io Public API"""
-    gate_sym = "PAXG_USDT" if symbol in ["XAUUSD", "XAU_USD"] else (symbol[:-4] + "_USDT" if symbol.endswith("USDT") else symbol)
-    url = f"https://api.gateio.ws/api/v4/spot/candlesticks?currency_pair={gate_sym}&interval=4h&limit=200"
+    """ดึงแท่งเทียน 4H จาก Gate.io API (รองรับทั้ง Spot และ Futures)"""
+    base_sym = symbol[:-4] if symbol.endswith("USDT") else symbol
+    pair = f"{base_sym}_USDT"
+    
+    endpoints = [
+        f"https://api.gateio.ws/api/v4/futures/usdt/candlesticks?contract={pair}&interval=4h&limit=200",
+        f"https://api.gateio.ws/api/v4/spot/candlesticks?currency_pair={pair}&interval=4h&limit=200"
+    ]
     headers = {"User-Agent": "Mozilla/5.0"}
-    try:
-        res = requests.get(url, headers=headers, timeout=10).json()
-        if isinstance(res, list) and len(res) >= 60:
-            # Gate.io Spot Candlestick Format: [timestamp, quote_vol, close, high, low, open, base_vol]
-            records = []
-            for item in res:
-                records.append({
-                    "open_time": float(item[0]) * 1000,
-                    "open": float(item[5]),
-                    "high": float(item[3]),
-                    "low": float(item[4]),
-                    "close": float(item[2]),
-                    "volume": float(item[6])
-                })
-            df = pd.DataFrame(records)
-            return df.sort_values(by="open_time").dropna().reset_index(drop=True)
-    except Exception as e:
-        print(f"[!] Gate.io API Error ({symbol}): {e}")
+    
+    for url in endpoints:
+        try:
+            res = requests.get(url, headers=headers, timeout=10).json()
+            if isinstance(res, list) and len(res) >= 60:
+                records = []
+                for item in res:
+                    # Futures format: dict / Spot format: list [t, v, c, h, l, o, ...]
+                    if isinstance(item, dict):
+                        records.append({
+                            "open_time": float(item.get("t", 0)) * 1000,
+                            "open": float(item.get("o", 0)),
+                            "high": float(item.get("h", 0)),
+                            "low": float(item.get("l", 0)),
+                            "close": float(item.get("c", 0)),
+                            "volume": float(item.get("v", 0))
+                        })
+                    elif isinstance(item, list) and len(item) >= 6:
+                        records.append({
+                            "open_time": float(item[0]) * 1000,
+                            "open": float(item[5]),
+                            "high": float(item[3]),
+                            "low": float(item[4]),
+                            "close": float(item[2]),
+                            "volume": float(item[6]) if len(item) > 6 else float(item[1])
+                        })
+                if records:
+                    df = pd.DataFrame(records)
+                    return df.sort_values(by="open_time").dropna().reset_index(drop=True)
+        except Exception:
+            continue
     return None
 
 def get_kucoin_candles_4h(symbol):
     """ดึงแท่งเทียน 4H จาก KuCoin Public API"""
-    kucoin_sym = "PAXG-USDT" if symbol in ["XAUUSD", "XAU_USD"] else (symbol[:-4] + "-USDT" if symbol.endswith("USDT") else symbol)
+    base_sym = symbol[:-4] if symbol.endswith("USDT") else symbol
+    kucoin_sym = f"{base_sym}-USDT"
     url = f"https://api.kucoin.com/api/v1/market/candles?type=4hour&symbol={kucoin_sym}"
     headers = {"User-Agent": "Mozilla/5.0"}
     try:
         res = requests.get(url, headers=headers, timeout=10).json()
         if res.get("code") == "200000" and "data" in res and len(res["data"]) >= 60:
-            # KuCoin Candlestick Format: [time, open, close, high, low, volume, turnover]
             records = []
             for item in res["data"]:
                 records.append({
@@ -123,18 +138,15 @@ def get_kucoin_candles_4h(symbol):
     return None
 
 def get_market_candles_4h(symbol):
-    """Router อัจฉริยะ: ลำดับการดึง Binance -> Gate.io -> KuCoin"""
-    # 1. ลองดึงจาก Binance ก่อน
+    """Router ดึงแท่งเทียนอัตโนมัติ: Binance -> Gate.io -> KuCoin"""
     df = get_binance_candles_4h(symbol)
     if df is not None:
         return df
 
-    # 2. ถ้าไม่ได้ ลอง Gate.io
     df = get_gateio_candles_4h(symbol)
     if df is not None:
         return df
 
-    # 3. ถ้ายังไม่ได้ ลอง KuCoin
     df = get_kucoin_candles_4h(symbol)
     return df
 
@@ -147,7 +159,6 @@ def analyze_4h_cloud(df):
         span_a = ((tenkan + kijun) / 2).shift(26)
         span_b = ((df["high"].rolling(52).max() + df["low"].rolling(52).min()) / 2).shift(26)
 
-        # แท่งที่ปิดสมบูรณ์ล่าสุดคือ iloc[-2]
         close_val = df["close"].iloc[-2]
         span_a_val = span_a.iloc[-2]
         span_b_val = span_b.iloc[-2]
@@ -242,8 +253,7 @@ def main():
         "",
         f"⚪️ *UNKNOWN (ในเมฆ) [{len(unknown_list)}]*",
         format_grid(unknown_list, cols=3),
-        "────────────────────────",
-        "📌 *แนวทาง:* รอแจ้งเตือนรอบคลื่นจากบอท 15M แล้วสังเกตระยะห่าง EMA 89 หน้างาน"
+        "────────────────────────"
     ]
 
     send_telegram("\n".join(msg))
