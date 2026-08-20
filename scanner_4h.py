@@ -5,10 +5,10 @@ import pandas as pd
 import numpy as np
 import time
 
-# --- 1. ดึง Secrets จาก Environment / GitHub Secrets ---
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "")
+# ======================== 1. CONFIGURATION & SECRETS ========================
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("TELEGRAM_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
-OANDA_API_KEY = os.getenv("OANDA_API_KEY", "")  # ใส่ Token ของ Oanda Practice/Live
+OANDA_API_KEY = os.getenv("OANDA_API_KEY", "")  # Token Oanda Practice/Live (ถ้ามี)
 
 WATCHLIST = [
     # --- Tier A (Core Blue Chips & Macro | เรียง A-Z) ---
@@ -48,8 +48,9 @@ WATCHLIST = [
     "ZECUSDT",
 ]
 
+# ======================== 2. DATA FETCHER (MULTI-EXCHANGE ROUTER) ========================
 def get_oanda_candles_4h(instrument="XAU_USD"):
-    """ดึงแท่งเทียน 4H จาก OANDA v20 API"""
+    """ดึงแท่งเทียน 4H สำหรับทองคำจาก OANDA API"""
     if not OANDA_API_KEY:
         return None
     url = f"https://api-fxpractice.oanda.com/v3/instruments/{instrument}/candles"
@@ -74,11 +75,11 @@ def get_oanda_candles_4h(instrument="XAU_USD"):
             df = pd.DataFrame(records)
             return df.sort_values(by="open_time").dropna().reset_index(drop=True)
     except Exception as e:
-        print(f"OANDA API Error: {e}")
+        print(f"[!] OANDA API Error ({instrument}): {e}")
     return None
 
 def get_bybit_candles_4h(symbol):
-    """ดึงแท่งเทียน 4H จาก Bybit Public API (ใช้สำรองและดึงคู่ที่ Binance ไม่มี)"""
+    """ดึงแท่งเทียน 4H จาก Bybit Public API (ใช้สำหรับ XAUUSDT และเหรียญทางเลือก)"""
     bybit_sym = "XAUUSDT" if symbol in ["XAUUSD", "XAU_USD"] else symbol
     url = f"https://api.bybit.com/v5/market/kline?category=linear&symbol={bybit_sym}&interval=240&limit=200"
     headers = {"User-Agent": "Mozilla/5.0"}
@@ -94,19 +95,20 @@ def get_bybit_candles_4h(symbol):
                     df[col] = pd.to_numeric(df[col], errors="coerce")
                 return df.sort_values(by="open_time").dropna().reset_index(drop=True)
     except Exception as e:
-        print(f"Bybit API Error ({symbol}): {e}")
+        print(f"[!] Bybit API Error ({symbol}): {e}")
     return None
 
 def get_binance_candles_4h(symbol):
-    """ดึงแท่งเทียน 4H จาก Binance Public API"""
+    """ดึงแท่งเทียน 4H จาก Binance (รองรับทั้ง Spot และ Futures อัตโนมัติ)"""
     endpoints = [
-        f"https://data-api.binance.vision/api/v3/klines?symbol={symbol}&interval=4h&limit=500",
-        f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval=4h&limit=500"
+        f"https://fapi.binance.com/fapi/v1/klines?symbol={symbol}&interval=4h&limit=200", # Binance Futures
+        f"https://data-api.binance.vision/api/v3/klines?symbol={symbol}&interval=4h&limit=200", # Binance Spot Vision
+        f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval=4h&limit=200" # Binance Spot Public
     ]
     for url in endpoints:
         try:
             res = requests.get(url, timeout=10).json()
-            if isinstance(res, list) and len(res) >= 100:
+            if isinstance(res, list) and len(res) >= 60:
                 df = pd.DataFrame(res, columns=[
                     "open_time", "open", "high", "low", "close", "volume",
                     "close_time", "quote_volume", "trades", "taker_buy_base",
@@ -120,18 +122,21 @@ def get_binance_candles_4h(symbol):
     return None
 
 def get_market_candles_4h(symbol):
-    """Router จัดการดึงแท่งเทียนอัตโนมัติตามแหล่งข้อมูล"""
+    """Router ดึงข้อมูลอัจฉริยะ ป้องกันข้อมูลหลุด/หาไม่เจอ"""
+    # กรณีทองคำ (XAUUSD)
     if symbol in ["XAUUSD", "XAU_USD"]:
         df = get_oanda_candles_4h("XAU_USD")
         if df is not None:
             return df
         return get_bybit_candles_4h("XAUUSDT")
 
+    # กรณีเหรียญคริปโต (Binance Futures/Spot -> Bybit)
     df = get_binance_candles_4h(symbol)
     if df is None:
         df = get_bybit_candles_4h(symbol)
     return df
 
+# ======================== 3. PURE KUMO CALCULATION ========================
 def analyze_4h_cloud(df):
     """คำนวณเมฆ Ichimoku (9, 26, 52, 26) บนแท่ง 4H ที่ปิดสมบูรณ์แล้ว"""
     try:
@@ -160,6 +165,7 @@ def analyze_4h_cloud(df):
     except Exception:
         return "UNKNOWN"
 
+# ======================== 4. FORMATTING & NOTIFICATION ========================
 def format_grid(coins, cols=3):
     """จัดเรียงรายชื่อเหรียญแถวละ 3 ตัว ล็อกความกว้างช่องละ 11 ตัวอักษร"""
     if not coins:
@@ -172,25 +178,32 @@ def format_grid(coins, cols=3):
     return "\n".join(rows)
 
 def send_telegram(message):
-    """ส่งข้อความแจ้งเตือนเข้า Telegram"""
+    """ส่งข้อความแจ้งเตือนเข้า Telegram รองรับ Fallback ป้องกัน Markdown หลุด"""
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
-        print("Error: Missing Telegram Token/Chat ID in Secrets")
+        print("[!] Error: ไม่พบ TELEGRAM_TOKEN หรือ TELEGRAM_CHAT_ID ใน Secrets")
         return
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": message,
+        "parse_mode": "Markdown",
+        "disable_web_page_preview": True
+    }
     try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        payload = {
-            "chat_id": TELEGRAM_CHAT_ID,
-            "text": message,
-            "parse_mode": "Markdown"
-        }
         res = requests.post(url, json=payload, timeout=10)
         if res.status_code != 200:
-            payload_plain = {"chat_id": TELEGRAM_CHAT_ID, "text": message.replace("*", "").replace("`", "")}
+            # Fallback ส่งแบบ Plain text กรณี Markdown มีอักขระพิเศษขัดข้อง
+            payload_plain = {
+                "chat_id": TELEGRAM_CHAT_ID, 
+                "text": message.replace("*", "").replace("`", "")
+            }
             requests.post(url, json=payload_plain, timeout=10)
     except Exception as e:
-        print(f"Telegram error: {e}")
+        print(f"[!] Telegram API error: {e}")
 
+# ======================== 5. MAIN EXECUTION ========================
 def main():
+    print("🚀 กำลังเริ่มต้นสแกนสถานะ 4H Pure Kumo...")
     buy_list = []
     sell_list = []
     unknown_list = []
@@ -200,16 +213,20 @@ def main():
 
         if df is None:
             unknown_list.append(sym)
+            print(f"[{sym}] ⚠️ Data Error -> UNKNOWN")
             continue
 
         status = analyze_4h_cloud(df)
 
         if status == "BUY":
             buy_list.append(sym)
+            print(f"[{sym}] 🟢 BUY (เหนือเมฆ)")
         elif status == "SELL":
             sell_list.append(sym)
+            print(f"[{sym}] 🔴 SELL (ใต้เมฆ)")
         else:
             unknown_list.append(sym)
+            print(f"[{sym}] ⚪ UNKNOWN (ในเมฆ)")
 
         time.sleep(0.05)
 
@@ -229,7 +246,7 @@ def main():
     ]
 
     send_telegram("\n".join(msg))
-    print("4H Scanner executed successfully.")
+    print("✅ สแกนเสร็จสิ้นและส่งข้อความ Telegram สำเร็จ")
 
 if __name__ == "__main__":
     main()
