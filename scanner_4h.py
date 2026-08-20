@@ -15,7 +15,7 @@ WATCHLIST = [
     "BTCUSDT",
     "ETHUSDT",
     "SOLUSDT",
-    "XAUUSD",
+    "XAUUSDT",
     "XRPUSDT",
 
     # --- DeFi & Real World Assets (เรียง A-Z) ---
@@ -45,6 +45,29 @@ WATCHLIST = [
     "ZECUSDT",
 ]
 
+def get_bybit_candles_4h(symbol="XAUUSDT"):
+    """ดึงข้อมูลแท่งเทียน 4H จาก Bybit Public API สำหรับ XAUUSDT หรือเหรียญที่ Binance ไม่มี"""
+    url = f"https://api.bybit.com/v5/market/kline?category=linear&symbol={symbol}&interval=240&limit=200"
+    headers = {"User-Agent": "Mozilla/5.0"}
+    try:
+        res = requests.get(url, headers=headers, timeout=10).json()
+        if res.get("retCode") == 0 and "result" in res and "list" in res["result"]:
+            raw_list = res["result"]["list"]
+            if len(raw_list) >= 60:
+                # Bybit ส่งค่า: [startTime, open, high, low, close, volume, turnover]
+                df = pd.DataFrame(raw_list, columns=[
+                    "open_time", "open", "high", "low", "close", "volume", "turnover"
+                ])
+                for col in ["open", "high", "low", "close", "volume", "open_time"]:
+                    df[col] = pd.to_numeric(df[col], errors="coerce")
+                
+                # Bybit เรียงจากใหม่ไปเก่า ต้องกลับด้านเรียงตามเวลาจากอดีตไปปัจจุบัน
+                df = df.sort_values(by="open_time").dropna().reset_index(drop=True)
+                return df
+    except Exception as e:
+        print(f"Bybit API Error ({symbol}): {e}")
+    return None
+
 def get_binance_candles_4h(symbol):
     """ดึงข้อมูลแท่งเทียน 4H ตรงจาก Binance Public API"""
     endpoints = [
@@ -68,6 +91,17 @@ def get_binance_candles_4h(symbol):
         except Exception:
             continue
     return None
+
+def get_market_candles_4h(symbol):
+    """Router ดึงข้อมูลแท่งเทียนตามประเภทสินทรัพย์"""
+    if symbol == "XAUUSDT":
+        return get_bybit_candles_4h(symbol)
+    
+    df = get_binance_candles_4h(symbol)
+    # ถ้า Binance ดึงไม่ได้ ให้ใช้ Bybit เป็นตัวสำรอง
+    if df is None:
+        df = get_bybit_candles_4h(symbol)
+    return df
 
 def analyze_4h_cloud(df):
     """คำนวณเมฆ Ichimoku (9, 26, 52, 26) บนแท่ง 4H ที่ปิดสมบูรณ์แล้ว"""
@@ -133,7 +167,7 @@ def main():
     unknown_list = []
 
     for sym in WATCHLIST:
-        df = get_binance_candles_4h(sym)
+        df = get_market_candles_4h(sym)
 
         if df is None:
             unknown_list.append(sym)
@@ -148,7 +182,7 @@ def main():
         else:
             unknown_list.append(sym)
 
-        time.sleep(0.04)
+        time.sleep(0.05)
 
     msg = [
         "📊 *สรุปภาพรวมเหรียญ TF 4H (Pure Cloud)*",
