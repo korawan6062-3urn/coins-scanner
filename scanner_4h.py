@@ -4,7 +4,7 @@ import requests
 import pandas as pd
 
 # ======================== 1. CONFIGURATION & SECRETS ========================
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 
 WATCHLIST = [
@@ -46,7 +46,7 @@ WATCHLIST = [
 # ======================== 2. DATA FETCHER ROUTER ========================
 def get_binance_candles_4h(symbol):
     """ดึงแท่งเทียน 4H จาก Binance (ข้าม XAUUSDT อัตโนมัติเพราะไม่มีใน Binance)"""
-    if symbol == "XAUUSDT":
+    if symbol in ["XAUUSDT", "XAUTUSDT"]:
         return None
         
     endpoints = [
@@ -59,7 +59,7 @@ def get_binance_candles_4h(symbol):
             res = requests.get(url, timeout=8).json()
             if isinstance(res, list) and len(res) >= 60:
                 df = pd.DataFrame(res, columns=[
-                    "open_time", "open", "high", "low", "close", "volume",
+                    "timestamp", "open", "high", "low", "close", "volume",
                     "close_time", "q_vol", "trades", "tb_base", "tb_quote", "ignore"
                 ])
                 for col in ["high", "low", "close"]:
@@ -69,12 +69,13 @@ def get_binance_candles_4h(symbol):
             continue
     return None
 
-def get_gateio_candles(symbol, timeframe, limit=150):
+def get_gateio_candles_4h(symbol, limit=150):
+    """ดึงแท่งเทียน 4H จาก Gate.io พร้อมจัดเรียงเวลาอดีต -> ปัจจุบัน"""
     base_sym = symbol[:-4] if symbol.endswith("USDT") else symbol
     pair = f"{base_sym}_USDT"
     endpoints = [
-        f"https://api.gateio.ws/api/v4/futures/usdt/candlesticks?contract={pair}&interval={timeframe}&limit={limit}",
-        f"https://api.gateio.ws/api/v4/spot/candlesticks?currency_pair={pair}&interval={timeframe}&limit={limit}"
+        f"https://api.gateio.ws/api/v4/futures/usdt/candlesticks?contract={pair}&interval=4h&limit={limit}",
+        f"https://api.gateio.ws/api/v4/spot/candlesticks?currency_pair={pair}&interval=4h&limit={limit}"
     ]
     headers = {"User-Agent": "Mozilla/5.0"}
     for url in endpoints:
@@ -86,7 +87,6 @@ def get_gateio_candles(symbol, timeframe, limit=150):
                     if isinstance(item, dict):
                         records.append({
                             "timestamp": float(item.get("t", 0)),
-                            "open": float(item.get("o", 0)),
                             "high": float(item.get("h", 0)),
                             "low": float(item.get("l", 0)),
                             "close": float(item.get("c", 0))
@@ -94,19 +94,21 @@ def get_gateio_candles(symbol, timeframe, limit=150):
                     elif isinstance(item, list) and len(item) >= 6:
                         records.append({
                             "timestamp": float(item[0]),
-                            "open": float(item[5]),
                             "high": float(item[3]),
                             "low": float(item[4]),
                             "close": float(item[2])
                         })
                 if records:
                     df = pd.DataFrame(records)
-                    # ล็อกให้เรียงจากอดีตไปปัจจุบันเสมอ
+                    # จัดเรียงจากอดีตไปปัจจุบันเสมอ
                     df = df.sort_values("timestamp").reset_index(drop=True)
-                    return df[["open", "high", "low", "close"]].dropna().reset_index(drop=True)
+                    return df[["high", "low", "close"]].dropna().reset_index(drop=True)
         except Exception:
             continue
     return None
+
+# Alias ป้องกันข้อผิดพลาดในการเรียกชื่อฟังก์ชัน
+get_gateio_candles = get_gateio_candles_4h
 
 def get_kucoin_candles_4h(symbol):
     """ดึงแท่งเทียน 4H จาก KuCoin Public API"""
@@ -118,7 +120,6 @@ def get_kucoin_candles_4h(symbol):
         if res.get("code") == "200000" and "data" in res and len(res["data"]) >= 60:
             records = [{"close": float(i[2]), "high": float(i[3]), "low": float(i[4])} for i in res["data"]]
             df = pd.DataFrame(records)
-            # KuCoin คืนข้อมูลเรียงจากใหม่ออกไปเก่า ต้องกลับลำดับ
             return df.iloc[::-1].reset_index(drop=True)
     except Exception as e:
         print(f"[!] KuCoin API Error ({symbol}): {e}")
@@ -178,7 +179,7 @@ def format_grid(coins, cols=3):
     return "\n".join(rows)
 
 def send_telegram(message):
-    """ส่งรายงานเข้า Telegram"""
+    """ส่งรายงานเข้า Telegram พร้อม Fallback Plain Text"""
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
         print("[!] Error: ไม่พบ Secret Telegram")
         return
