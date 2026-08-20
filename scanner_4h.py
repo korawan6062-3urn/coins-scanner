@@ -5,9 +5,10 @@ import pandas as pd
 import numpy as np
 import time
 
-# --- 1. ดึงข้อมูล Telegram จาก GitHub Secrets ---
+# --- 1. ดึง Secrets จาก Environment / GitHub Secrets ---
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
+OANDA_API_KEY = os.getenv("OANDA_API_KEY", "")  # ใส่ Token ของ Oanda Practice/Live
 
 WATCHLIST = [
     # --- Tier A (Core Blue Chips & Macro | เรียง A-Z) ---
@@ -15,12 +16,13 @@ WATCHLIST = [
     "BTCUSDT",
     "ETHUSDT",
     "SOLUSDT",
-    "XAUUSDT",
+    "XAUUSD",
     "XRPUSDT",
 
     # --- DeFi & Real World Assets (เรียง A-Z) ---
     "AAVEUSDT",
     "ENAUSDT",
+    "HYPEUSDT",
     "JUPUSDT",
     "LINKUSDT",
     "ONDOUSDT",
@@ -41,40 +43,66 @@ WATCHLIST = [
     "TIAUSDT",
 
     # --- เพิ่มเติม / แก้ไขในอนาคต (เรียง A-Z) ---
+    "1000KASUSDT",
     "LTCUSDT",
     "ZECUSDT",
 ]
 
-def get_bybit_candles_4h(symbol="XAUUSDT"):
-    """ดึงข้อมูลแท่งเทียน 4H จาก Bybit Public API สำหรับ XAUUSDT หรือเหรียญที่ Binance ไม่มี"""
-    url = f"https://api.bybit.com/v5/market/kline?category=linear&symbol={symbol}&interval=240&limit=200"
+def get_oanda_candles_4h(instrument="XAU_USD"):
+    """ดึงแท่งเทียน 4H จาก OANDA v20 API"""
+    if not OANDA_API_KEY:
+        return None
+    url = f"https://api-fxpractice.oanda.com/v3/instruments/{instrument}/candles"
+    headers = {
+        "Authorization": f"Bearer {OANDA_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    params = {"granularity": "H4", "count": 200, "price": "M"}
+    try:
+        res = requests.get(url, headers=headers, params=params, timeout=10).json()
+        if "candles" in res and len(res["candles"]) >= 60:
+            records = []
+            for c in res["candles"]:
+                records.append({
+                    "open_time": pd.to_datetime(c["time"]).timestamp() * 1000,
+                    "open": float(c["mid"]["o"]),
+                    "high": float(c["mid"]["h"]),
+                    "low": float(c["mid"]["l"]),
+                    "close": float(c["mid"]["c"]),
+                    "volume": float(c["volume"])
+                })
+            df = pd.DataFrame(records)
+            return df.sort_values(by="open_time").dropna().reset_index(drop=True)
+    except Exception as e:
+        print(f"OANDA API Error: {e}")
+    return None
+
+def get_bybit_candles_4h(symbol):
+    """ดึงแท่งเทียน 4H จาก Bybit Public API (ใช้สำรองและดึงคู่ที่ Binance ไม่มี)"""
+    bybit_sym = "XAUUSDT" if symbol in ["XAUUSD", "XAU_USD"] else symbol
+    url = f"https://api.bybit.com/v5/market/kline?category=linear&symbol={bybit_sym}&interval=240&limit=200"
     headers = {"User-Agent": "Mozilla/5.0"}
     try:
         res = requests.get(url, headers=headers, timeout=10).json()
         if res.get("retCode") == 0 and "result" in res and "list" in res["result"]:
             raw_list = res["result"]["list"]
             if len(raw_list) >= 60:
-                # Bybit ส่งค่า: [startTime, open, high, low, close, volume, turnover]
                 df = pd.DataFrame(raw_list, columns=[
                     "open_time", "open", "high", "low", "close", "volume", "turnover"
                 ])
                 for col in ["open", "high", "low", "close", "volume", "open_time"]:
                     df[col] = pd.to_numeric(df[col], errors="coerce")
-                
-                # Bybit เรียงจากใหม่ไปเก่า ต้องกลับด้านเรียงตามเวลาจากอดีตไปปัจจุบัน
-                df = df.sort_values(by="open_time").dropna().reset_index(drop=True)
-                return df
+                return df.sort_values(by="open_time").dropna().reset_index(drop=True)
     except Exception as e:
         print(f"Bybit API Error ({symbol}): {e}")
     return None
 
 def get_binance_candles_4h(symbol):
-    """ดึงข้อมูลแท่งเทียน 4H ตรงจาก Binance Public API"""
+    """ดึงแท่งเทียน 4H จาก Binance Public API"""
     endpoints = [
         f"https://data-api.binance.vision/api/v3/klines?symbol={symbol}&interval=4h&limit=500",
         f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval=4h&limit=500"
     ]
-    
     for url in endpoints:
         try:
             res = requests.get(url, timeout=10).json()
@@ -86,19 +114,20 @@ def get_binance_candles_4h(symbol):
                 ])
                 for col in ["open", "high", "low", "close", "volume", "open_time"]:
                     df[col] = pd.to_numeric(df[col], errors="coerce")
-                df = df.sort_values(by="open_time").dropna().reset_index(drop=True)
-                return df
+                return df.sort_values(by="open_time").dropna().reset_index(drop=True)
         except Exception:
             continue
     return None
 
 def get_market_candles_4h(symbol):
-    """Router ดึงข้อมูลแท่งเทียนตามประเภทสินทรัพย์"""
-    if symbol == "XAUUSDT":
-        return get_bybit_candles_4h(symbol)
-    
+    """Router จัดการดึงแท่งเทียนอัตโนมัติตามแหล่งข้อมูล"""
+    if symbol in ["XAUUSD", "XAU_USD"]:
+        df = get_oanda_candles_4h("XAU_USD")
+        if df is not None:
+            return df
+        return get_bybit_candles_4h("XAUUSDT")
+
     df = get_binance_candles_4h(symbol)
-    # ถ้า Binance ดึงไม่ได้ ให้ใช้ Bybit เป็นตัวสำรอง
     if df is None:
         df = get_bybit_candles_4h(symbol)
     return df
@@ -111,7 +140,7 @@ def analyze_4h_cloud(df):
         span_a = ((tenkan + kijun) / 2).shift(26)
         span_b = ((df["high"].rolling(52).max() + df["low"].rolling(52).min()) / 2).shift(26)
 
-        # แท่งปิดสมบูรณ์ล่าสุดคือ iloc[-2]
+        # แท่งที่ปิดสมบูรณ์ล่าสุดคือ iloc[-2]
         close_val = df["close"].iloc[-2]
         span_a_val = span_a.iloc[-2]
         span_b_val = span_b.iloc[-2]
@@ -143,7 +172,7 @@ def format_grid(coins, cols=3):
     return "\n".join(rows)
 
 def send_telegram(message):
-    """ส่งข้อความสรุปเข้า Telegram"""
+    """ส่งข้อความแจ้งเตือนเข้า Telegram"""
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
         print("Error: Missing Telegram Token/Chat ID in Secrets")
         return
