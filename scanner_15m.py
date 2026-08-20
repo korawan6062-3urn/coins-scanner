@@ -69,12 +69,12 @@ def get_binance_candles_15m(symbol):
             continue
     return None
 
-def get_gateio_candles(symbol, timeframe, limit=150):
+def get_gateio_candles_15m(symbol, limit=150):
     base_sym = symbol[:-4] if symbol.endswith("USDT") else symbol
     pair = f"{base_sym}_USDT"
     endpoints = [
-        f"https://api.gateio.ws/api/v4/futures/usdt/candlesticks?contract={pair}&interval={timeframe}&limit={limit}",
-        f"https://api.gateio.ws/api/v4/spot/candlesticks?currency_pair={pair}&interval={timeframe}&limit={limit}"
+        f"https://api.gateio.ws/api/v4/futures/usdt/candlesticks?contract={pair}&interval=15m&limit={limit}",
+        f"https://api.gateio.ws/api/v4/spot/candlesticks?currency_pair={pair}&interval=15m&limit={limit}"
     ]
     headers = {"User-Agent": "Mozilla/5.0"}
     for url in endpoints:
@@ -101,12 +101,15 @@ def get_gateio_candles(symbol, timeframe, limit=150):
                         })
                 if records:
                     df = pd.DataFrame(records)
-                    # ล็อกให้เรียงจากอดีตไปปัจจุบันเสมอ
+                    # จัดเรียงแท่งเทียนจากอดีตไปปัจจุบัน
                     df = df.sort_values("timestamp").reset_index(drop=True)
                     return df[["open", "high", "low", "close"]].dropna().reset_index(drop=True)
         except Exception:
             continue
     return None
+
+# สร้าง alias กันพลาดในกรณีที่จุดอื่นเรียกชื่อสั้น
+get_gateio_candles = get_gateio_candles_15m
 
 def get_kucoin_candles_15m(symbol):
     """ดึงแท่งเทียน 15M จาก KuCoin Public API"""
