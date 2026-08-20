@@ -8,7 +8,6 @@ import time
 # ======================== 1. CONFIGURATION & SECRETS ========================
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("TELEGRAM_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
-OANDA_API_KEY = os.getenv("OANDA_API_KEY", "")  # Token Oanda Practice/Live (ถ้ามี)
 
 WATCHLIST = [
     # --- Tier A (Core Blue Chips & Macro | เรียง A-Z) ---
@@ -22,7 +21,6 @@ WATCHLIST = [
     # --- DeFi & Real World Assets (เรียง A-Z) ---
     "AAVEUSDT",
     "ENAUSDT",
-    "HYPEUSDT",
     "JUPUSDT",
     "LINKUSDT",
     "ONDOUSDT",
@@ -42,68 +40,19 @@ WATCHLIST = [
     "SUIUSDT",
     "TIAUSDT",
 
-    # --- เพิ่มเติม / แก้ไขในอนาคต (เรียง A-Z) ---
-    "1000KASUSDT",
+    # --- Legacy & เพิ่มเติม (เรียง A-Z) ---
     "LTCUSDT",
     "ZECUSDT",
 ]
 
-# ======================== 2. DATA FETCHER (MULTI-EXCHANGE ROUTER) ========================
-def get_oanda_candles_4h(instrument="XAU_USD"):
-    """ดึงแท่งเทียน 4H สำหรับทองคำจาก OANDA API"""
-    if not OANDA_API_KEY:
-        return None
-    url = f"https://api-fxpractice.oanda.com/v3/instruments/{instrument}/candles"
-    headers = {
-        "Authorization": f"Bearer {OANDA_API_KEY}",
-        "Content-Type": "application/json"
-    }
-    params = {"granularity": "H4", "count": 200, "price": "M"}
-    try:
-        res = requests.get(url, headers=headers, params=params, timeout=10).json()
-        if "candles" in res and len(res["candles"]) >= 60:
-            records = []
-            for c in res["candles"]:
-                records.append({
-                    "open_time": pd.to_datetime(c["time"]).timestamp() * 1000,
-                    "open": float(c["mid"]["o"]),
-                    "high": float(c["mid"]["h"]),
-                    "low": float(c["mid"]["l"]),
-                    "close": float(c["mid"]["c"]),
-                    "volume": float(c["volume"])
-                })
-            df = pd.DataFrame(records)
-            return df.sort_values(by="open_time").dropna().reset_index(drop=True)
-    except Exception as e:
-        print(f"[!] OANDA API Error ({instrument}): {e}")
-    return None
-
-def get_bybit_candles_4h(symbol):
-    """ดึงแท่งเทียน 4H จาก Bybit Public API (ใช้สำหรับ XAUUSDT และเหรียญทางเลือก)"""
-    bybit_sym = "XAUUSDT" if symbol in ["XAUUSD", "XAU_USD"] else symbol
-    url = f"https://api.bybit.com/v5/market/kline?category=linear&symbol={bybit_sym}&interval=240&limit=200"
-    headers = {"User-Agent": "Mozilla/5.0"}
-    try:
-        res = requests.get(url, headers=headers, timeout=10).json()
-        if res.get("retCode") == 0 and "result" in res and "list" in res["result"]:
-            raw_list = res["result"]["list"]
-            if len(raw_list) >= 60:
-                df = pd.DataFrame(raw_list, columns=[
-                    "open_time", "open", "high", "low", "close", "volume", "turnover"
-                ])
-                for col in ["open", "high", "low", "close", "volume", "open_time"]:
-                    df[col] = pd.to_numeric(df[col], errors="coerce")
-                return df.sort_values(by="open_time").dropna().reset_index(drop=True)
-    except Exception as e:
-        print(f"[!] Bybit API Error ({symbol}): {e}")
-    return None
-
+# ======================== 2. DATA FETCHERS (BINANCE / GATE.IO / KUCOIN) ========================
 def get_binance_candles_4h(symbol):
-    """ดึงแท่งเทียน 4H จาก Binance (รองรับทั้ง Spot และ Futures อัตโนมัติ)"""
+    """ดึงแท่งเทียน 4H จาก Binance (Futures -> Spot Vision -> Spot Public)"""
+    binance_sym = "PAXGUSDT" if symbol in ["XAUUSD", "XAU_USD"] else symbol
     endpoints = [
-        f"https://fapi.binance.com/fapi/v1/klines?symbol={symbol}&interval=4h&limit=200", # Binance Futures
-        f"https://data-api.binance.vision/api/v3/klines?symbol={symbol}&interval=4h&limit=200", # Binance Spot Vision
-        f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval=4h&limit=200" # Binance Spot Public
+        f"https://fapi.binance.com/fapi/v1/klines?symbol={binance_sym}&interval=4h&limit=200",
+        f"https://data-api.binance.vision/api/v3/klines?symbol={binance_sym}&interval=4h&limit=200",
+        f"https://api.binance.com/api/v3/klines?symbol={binance_sym}&interval=4h&limit=200"
     ]
     for url in endpoints:
         try:
@@ -121,19 +70,70 @@ def get_binance_candles_4h(symbol):
             continue
     return None
 
-def get_market_candles_4h(symbol):
-    """Router ดึงข้อมูลอัจฉริยะ ป้องกันข้อมูลหลุด/หาไม่เจอ"""
-    # กรณีทองคำ (XAUUSD)
-    if symbol in ["XAUUSD", "XAU_USD"]:
-        df = get_oanda_candles_4h("XAU_USD")
-        if df is not None:
-            return df
-        return get_bybit_candles_4h("XAUUSDT")
+def get_gateio_candles_4h(symbol):
+    """ดึงแท่งเทียน 4H จาก Gate.io Public API"""
+    gate_sym = "PAXG_USDT" if symbol in ["XAUUSD", "XAU_USD"] else (symbol[:-4] + "_USDT" if symbol.endswith("USDT") else symbol)
+    url = f"https://api.gateio.ws/api/v4/spot/candlesticks?currency_pair={gate_sym}&interval=4h&limit=200"
+    headers = {"User-Agent": "Mozilla/5.0"}
+    try:
+        res = requests.get(url, headers=headers, timeout=10).json()
+        if isinstance(res, list) and len(res) >= 60:
+            # Gate.io Spot Candlestick Format: [timestamp, quote_vol, close, high, low, open, base_vol]
+            records = []
+            for item in res:
+                records.append({
+                    "open_time": float(item[0]) * 1000,
+                    "open": float(item[5]),
+                    "high": float(item[3]),
+                    "low": float(item[4]),
+                    "close": float(item[2]),
+                    "volume": float(item[6])
+                })
+            df = pd.DataFrame(records)
+            return df.sort_values(by="open_time").dropna().reset_index(drop=True)
+    except Exception as e:
+        print(f"[!] Gate.io API Error ({symbol}): {e}")
+    return None
 
-    # กรณีเหรียญคริปโต (Binance Futures/Spot -> Bybit)
+def get_kucoin_candles_4h(symbol):
+    """ดึงแท่งเทียน 4H จาก KuCoin Public API"""
+    kucoin_sym = "PAXG-USDT" if symbol in ["XAUUSD", "XAU_USD"] else (symbol[:-4] + "-USDT" if symbol.endswith("USDT") else symbol)
+    url = f"https://api.kucoin.com/api/v1/market/candles?type=4hour&symbol={kucoin_sym}"
+    headers = {"User-Agent": "Mozilla/5.0"}
+    try:
+        res = requests.get(url, headers=headers, timeout=10).json()
+        if res.get("code") == "200000" and "data" in res and len(res["data"]) >= 60:
+            # KuCoin Candlestick Format: [time, open, close, high, low, volume, turnover]
+            records = []
+            for item in res["data"]:
+                records.append({
+                    "open_time": float(item[0]) * 1000,
+                    "open": float(item[1]),
+                    "close": float(item[2]),
+                    "high": float(item[3]),
+                    "low": float(item[4]),
+                    "volume": float(item[5])
+                })
+            df = pd.DataFrame(records)
+            return df.sort_values(by="open_time").dropna().reset_index(drop=True)
+    except Exception as e:
+        print(f"[!] KuCoin API Error ({symbol}): {e}")
+    return None
+
+def get_market_candles_4h(symbol):
+    """Router อัจฉริยะ: ลำดับการดึง Binance -> Gate.io -> KuCoin"""
+    # 1. ลองดึงจาก Binance ก่อน
     df = get_binance_candles_4h(symbol)
-    if df is None:
-        df = get_bybit_candles_4h(symbol)
+    if df is not None:
+        return df
+
+    # 2. ถ้าไม่ได้ ลอง Gate.io
+    df = get_gateio_candles_4h(symbol)
+    if df is not None:
+        return df
+
+    # 3. ถ้ายังไม่ได้ ลอง KuCoin
+    df = get_kucoin_candles_4h(symbol)
     return df
 
 # ======================== 3. PURE KUMO CALCULATION ========================
@@ -178,7 +178,7 @@ def format_grid(coins, cols=3):
     return "\n".join(rows)
 
 def send_telegram(message):
-    """ส่งข้อความแจ้งเตือนเข้า Telegram รองรับ Fallback ป้องกัน Markdown หลุด"""
+    """ส่งข้อความแจ้งเตือนเข้า Telegram พร้อม Fallback ป้องกัน Markdown หลุด"""
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
         print("[!] Error: ไม่พบ TELEGRAM_TOKEN หรือ TELEGRAM_CHAT_ID ใน Secrets")
         return
@@ -192,7 +192,6 @@ def send_telegram(message):
     try:
         res = requests.post(url, json=payload, timeout=10)
         if res.status_code != 200:
-            # Fallback ส่งแบบ Plain text กรณี Markdown มีอักขระพิเศษขัดข้อง
             payload_plain = {
                 "chat_id": TELEGRAM_CHAT_ID, 
                 "text": message.replace("*", "").replace("`", "")
@@ -203,7 +202,7 @@ def send_telegram(message):
 
 # ======================== 5. MAIN EXECUTION ========================
 def main():
-    print("🚀 กำลังเริ่มต้นสแกนสถานะ 4H Pure Kumo...")
+    print("🚀 เริ่มต้นสแกน TF 4H (Pure Cloud)...")
     buy_list = []
     sell_list = []
     unknown_list = []
@@ -213,7 +212,7 @@ def main():
 
         if df is None:
             unknown_list.append(sym)
-            print(f"[{sym}] ⚠️ Data Error -> UNKNOWN")
+            print(f"[{sym}] ⚠️ ไม่สามารถดึงข้อมูลได้ -> UNKNOWN")
             continue
 
         status = analyze_4h_cloud(df)
@@ -246,7 +245,7 @@ def main():
     ]
 
     send_telegram("\n".join(msg))
-    print("✅ สแกนเสร็จสิ้นและส่งข้อความ Telegram สำเร็จ")
+    print("✅ สแกน 4H เสร็จสิ้นและส่งแจ้งเตือนสำเร็จ")
 
 if __name__ == "__main__":
     main()
