@@ -10,10 +10,41 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 
 WATCHLIST = [
-  "BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "PAXGUSDT", "XRPUSDT",
-  "ONDOUSDT", "PENDLEUSDT", "AAVEUSDT", "LINKUSDT", "ENAUSDT", "UNIUSDT", "JUPUSDT",
-  "TAOUSDT", "NEARUSDT", "FETUSDT", "RENDERUSDT", "WLDUSDT",
-  "SUIUSDT", "SEIUSDT", "INJUSDT", "TIAUSDT"
+    # --- Tier A (Core Blue Chips & Macro | เรียง A-Z) ---
+    "BNBUSDT",
+    "BTCUSDT",
+    "ETHUSDT",
+    "SOLUSDT",
+    "XAUUSDT",
+    "XRPUSDT",
+
+    # --- DeFi & Real World Assets (เรียง A-Z) ---
+    "AAVEUSDT",
+    "ENAUSDT",
+    "HYPEUSDT",
+    "JUPUSDT",
+    "LINKUSDT",
+    "ONDOUSDT",
+    "PENDLEUSDT",
+    "UNIUSDT",
+
+    # --- AI & Decentralized Compute (เรียง A-Z) ---
+    "FETUSDT",
+    "NEARUSDT",
+    "RENDERUSDT",
+    "TAOUSDT",
+    "WLDUSDT",
+
+    # --- Layer 1 & Modular (เรียง A-Z) ---
+    "INJUSDT",
+    "SEIUSDT",
+    "SUIUSDT",
+    "TIAUSDT",
+
+    # --- เพิ่มเติม / แก้ไขในอนาคต (เรียง A-Z) ---
+    "KASUSDT",
+    "LTCUSDT",
+    "ZECUSDT",
 ]
 
 def get_binance_candles_4h(symbol):
