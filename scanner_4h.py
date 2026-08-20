@@ -15,7 +15,7 @@ WATCHLIST = [
     "BTCUSDT",
     "ETHUSDT",
     "SOLUSDT",
-    "XAUUSDT",
+    "XAUUSDT.P",
     "XRPUSDT",
 
     # --- DeFi & Real World Assets (เรียง A-Z) ---
