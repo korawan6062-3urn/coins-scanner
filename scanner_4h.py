@@ -69,37 +69,41 @@ def get_binance_candles_4h(symbol):
             continue
     return None
 
-def get_gateio_candles_4h(symbol):
-    """ดึงแท่งเทียน 4H จาก Gate.io (รองรับทั้ง XAU_USDT และเหรียญ Spot/Futures)"""
+def get_gateio_candles(symbol, timeframe, limit=150):
     base_sym = symbol[:-4] if symbol.endswith("USDT") else symbol
     pair = f"{base_sym}_USDT"
-    
     endpoints = [
-        f"https://api.gateio.ws/api/v4/futures/usdt/candlesticks?contract={pair}&interval=4h&limit=150",
-        f"https://api.gateio.ws/api/v4/spot/candlesticks?currency_pair={pair}&interval=4h&limit=150"
+        f"https://api.gateio.ws/api/v4/futures/usdt/candlesticks?contract={pair}&interval={timeframe}&limit={limit}",
+        f"https://api.gateio.ws/api/v4/spot/candlesticks?currency_pair={pair}&interval={timeframe}&limit={limit}"
     ]
     headers = {"User-Agent": "Mozilla/5.0"}
-    
     for url in endpoints:
         try:
-            res = requests.get(url, headers=headers, timeout=8).json()
+            res = requests.get(url, headers=headers, timeout=6).json()
             if isinstance(res, list) and len(res) >= 60:
                 records = []
                 for item in res:
                     if isinstance(item, dict):
                         records.append({
+                            "timestamp": float(item.get("t", 0)),
+                            "open": float(item.get("o", 0)),
                             "high": float(item.get("h", 0)),
                             "low": float(item.get("l", 0)),
                             "close": float(item.get("c", 0))
                         })
                     elif isinstance(item, list) and len(item) >= 6:
                         records.append({
+                            "timestamp": float(item[0]),
+                            "open": float(item[5]),
                             "high": float(item[3]),
                             "low": float(item[4]),
                             "close": float(item[2])
                         })
                 if records:
-                    return pd.DataFrame(records).dropna().reset_index(drop=True)
+                    df = pd.DataFrame(records)
+                    # ล็อกให้เรียงจากอดีตไปปัจจุบันเสมอ
+                    df = df.sort_values("timestamp").reset_index(drop=True)
+                    return df[["open", "high", "low", "close"]].dropna().reset_index(drop=True)
         except Exception:
             continue
     return None
