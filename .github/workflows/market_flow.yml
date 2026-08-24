@@ -1,4 +1,4 @@
-name: Market Flow Scanner
+name: 4H Summary Scanner
 
 on:
   workflow_dispatch:
@@ -13,16 +13,16 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11' # อัปเดต Python เวอร์ชัน
+          python-version: '3.11'
 
       - name: Install Dependencies
         run: |
-          pip install requests pandas google-genai # เปลี่ยนชื่อแพ็กเกจตรงนี้
+          pip install requests pandas numpy google-genai
 
-      - name: Run Market Flow
+      - name: Run 4H Scanner
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
-          python market_flow.py
+          python scanner_4h.py
