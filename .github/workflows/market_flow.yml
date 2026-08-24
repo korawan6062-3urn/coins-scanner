@@ -13,11 +13,11 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: '3.11' # อัปเดต Python เวอร์ชัน
 
       - name: Install Dependencies
         run: |
-          pip install requests pandas google-generativeai
+          pip install requests pandas google-genai # เปลี่ยนชื่อแพ็กเกจตรงนี้
 
       - name: Run Market Flow
         env:
