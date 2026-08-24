@@ -2,16 +2,19 @@ import os
 import sys
 import requests
 import pandas as pd
-import time
+import warnings
 from concurrent.futures import ThreadPoolExecutor
 from google import genai
+
+warnings.filterwarnings("ignore")
+http = requests.Session()
 
 # --- ดึง Token จาก GitHub Secrets ---
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-# จัดกลุ่มสินทรัพย์เพื่อดู Capital Rotation (ใช้เหรียญ Spot)
+# จัดกลุ่มสินทรัพย์ (แก้ไขกลับมาใช้ XAUUSDT ตามระบบหลัก)
 SECTORS = {
     "Macro & King": ["BTCUSDT", "XAUUSDT"],
     "Tier 1 Bluechip": ["ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT"],
@@ -22,32 +25,77 @@ SECTORS = {
     "Memes & Beta": ["DOGEUSDT", "GALAUSDT", "PEPEUSDT", "RUNEUSDT", "SANDUSDT", "SHIBUSDT"]
 }
 
-def get_binance_spot_candles(symbol, interval="4h", limit=10):
-    """ดึงข้อมูล Spot ตรงจาก Binance Vision (เสถียร 100% ไม่โดนบล็อก IP)"""
+# ==========================================
+# ROUTER FETCHING LOGIC (Binance -> Gateio -> Kucoin)
+# ==========================================
+def get_binance_candles(symbol, timeframe, limit=60):
+    if symbol in ["XAUUSDT", "XAUTUSDT"]: return None
     endpoints = [
-        f"https://data-api.binance.vision/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}",
-        f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}"
+        f"https://fapi.binance.com/fapi/v1/klines?symbol={symbol}&interval={timeframe}&limit={limit}",
+        f"https://data-api.binance.vision/api/v3/klines?symbol={symbol}&interval={timeframe}&limit={limit}",
+        f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={timeframe}&limit={limit}"
     ]
     for url in endpoints:
         try:
-            res = requests.get(url, timeout=10).json()
-            if isinstance(res, list) and len(res) >= 2:
-                df = pd.DataFrame(res, columns=[
-                    "open_time", "open", "high", "low", "close", "volume",
-                    "close_time", "quote_volume", "trades", "taker_buy_base",
-                    "taker_buy_quote", "ignore"
-                ])
-                for col in ["open", "high", "low", "close", "open_time"]:
-                    df[col] = pd.to_numeric(df[col], errors="coerce")
-                return df.sort_values(by="open_time").dropna().reset_index(drop=True)
-        except Exception:
-            continue
+            res = http.get(url, timeout=4).json()
+            if isinstance(res, list) and len(res) >= limit // 2:
+                df = pd.DataFrame(res, columns=["timestamp", "open", "high", "low", "close", "volume", "close_time", "q_vol", "trades", "tb_base", "tb_quote", "ignore"])
+                for col in ["open", "high", "low", "close"]: df[col] = pd.to_numeric(df[col], errors="coerce")
+                return df[["open", "high", "low", "close"]].dropna().reset_index(drop=True)
+        except: continue
     return None
 
+def get_gateio_candles(symbol, timeframe, limit=60):
+    base_sym = symbol[:-4] if symbol.endswith("USDT") else symbol
+    pair = f"{base_sym}_USDT"
+    endpoints = [
+        f"https://api.gateio.ws/api/v4/futures/usdt/candlesticks?contract={pair}&interval={timeframe}&limit={limit}",
+        f"https://api.gateio.ws/api/v4/spot/candlesticks?currency_pair={pair}&interval={timeframe}&limit={limit}"
+    ]
+    headers = {"User-Agent": "Mozilla/5.0"}
+    for url in endpoints:
+        try:
+            res = http.get(url, headers=headers, timeout=4).json()
+            if isinstance(res, list) and len(res) >= limit // 2:
+                records = []
+                for item in res:
+                    if isinstance(item, dict):
+                        records.append({"timestamp": float(item.get("t", 0)), "open": float(item.get("o", 0)), "high": float(item.get("h", 0)), "low": float(item.get("l", 0)), "close": float(item.get("c", 0))})
+                    elif isinstance(item, list) and len(item) >= 6:
+                        records.append({"timestamp": float(item[0]), "open": float(item[5]), "high": float(item[3]), "low": float(item[4]), "close": float(item[2])})
+                if records:
+                    df = pd.DataFrame(records).sort_values("timestamp").reset_index(drop=True)
+                    return df[["open", "high", "low", "close"]].dropna().reset_index(drop=True)
+        except: continue
+    return None
+
+def get_kucoin_candles(symbol, timeframe, limit=60):
+    base_sym = symbol[:-4] if symbol.endswith("USDT") else symbol
+    tf_map = {"5m": "5min", "15m": "15min", "4h": "4hour"}
+    url = f"https://api.kucoin.com/api/v1/market/candles?type={tf_map.get(timeframe, timeframe)}&symbol={base_sym}-USDT"
+    try:
+        res = http.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=4).json()
+        if res.get("code") == "200000" and "data" in res and len(res["data"]) >= limit // 2:
+            records = [{"open": float(i[1]), "close": float(i[2]), "high": float(i[3]), "low": float(i[4])} for i in res["data"]]
+            return pd.DataFrame(records)[::-1].reset_index(drop=True).dropna()
+    except: pass
+    return None
+
+def fetch_candles(symbol, timeframe, limit=60):
+    df = get_binance_candles(symbol, timeframe, limit)
+    if df is not None: return df
+    df = get_gateio_candles(symbol, timeframe, limit)
+    if df is not None: return df
+    return get_kucoin_candles(symbol, timeframe, limit)
+
+# ==========================================
+# PERFORMANCE ANALYSIS & AI REGIME
+# ==========================================
 def get_4h_performance(symbol):
     """คำนวณ % เปลี่ยนแปลงของแท่ง 4H ปิดสมบูรณ์ล่าสุด"""
-    df = get_binance_spot_candles(symbol, interval="4h", limit=5)
-    if df is None or len(df) < 2: return symbol, 0.0
+    df = fetch_candles(symbol, timeframe="4h", limit=60)
+    if df is None or len(df) < 3: 
+        return symbol, 0.0
     
     close_val = df["close"].iloc[-2]  # แท่ง 4H ที่ปิดแล้วล่าสุด
     prev_close = df["close"].iloc[-3] # แท่งก่อนหน้า
@@ -55,20 +103,18 @@ def get_4h_performance(symbol):
     pct_change = ((close_val - prev_close) / prev_close) * 100
     return symbol, pct_change
 
-def send_telegram(message):
-    """ส่งข้อความเข้า Telegram พร้อมระบบ Fallback Plain Text"""
+def send_telegram_msg(message, parse_mode="HTML"):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
         print("Error: Missing TELEGRAM_TOKEN or TELEGRAM_CHAT_ID")
         return
 
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "HTML"}
+    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": parse_mode, "disable_web_page_preview": True}
     try:
-        res = requests.post(url, json=payload, timeout=10)
+        res = http.post(url, json=payload, timeout=8)
         if res.status_code != 200:
-            # Fallback หากมีปัญหา HTML tags
-            plain_text = message.replace("<b>", "").replace("</b>", "").replace("<code>", "").replace("</code>", "")
-            requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": plain_text}, timeout=10)
+            plain = message.replace("<b>", "").replace("</b>", "").replace("<code>", "").replace("</code>", "")
+            http.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": plain}, timeout=8)
         print("Telegram message sent successfully.")
     except Exception as e:
         print(f"Telegram Exception: {e}")
@@ -76,14 +122,12 @@ def send_telegram(message):
 def main():
     print("Fetching Market Performance Data...")
     
-    # 1. ดึงข้อมูลทุกเหรียญพร้อมกัน (Threading ช่วยให้เสร็จภายใน 2-3 วินาที)
     all_symbols = [coin for group in SECTORS.values() for coin in group]
     results = {}
     with ThreadPoolExecutor(max_workers=10) as executor:
         for sym, pct in executor.map(get_4h_performance, all_symbols):
             results[sym] = pct
             
-    # 2. คำนวณค่าเฉลี่ยของแต่ละ Sector
     sector_perf = {}
     for sector, coins in SECTORS.items():
         valid_coins = [results[c] for c in coins if c in results]
@@ -91,13 +135,12 @@ def main():
         sector_perf[sector] = avg_pct
         
     btc_perf = results.get("BTCUSDT", 0.0)
-    gold_perf = results.get("PAXGUSDT", 0.0) # ใช้ PaxG เป็น Proxy ทองคำบน Spot
+    gold_perf = results.get("XAUUSDT", 0.0)
     
-    # 3. เตรียมข้อมูลส่งให้ AI วิเคราะห์
     prompt_data = (
         f"ข้อมูลผลตอบแทนในกรอบ 4 ชั่วโมงล่าสุด (4H % Change):\n"
         f"- BTC: {btc_perf:.2f}%\n"
-        f"- ทองคำ (PAXG): {gold_perf:.2f}%\n\n"
+        f"- ทองคำ (XAU): {gold_perf:.2f}%\n\n"
         f"ค่าเฉลี่ยผลตอบแทนรายกลุ่ม (Sector Average % Change):\n"
     )
     for s, p in sector_perf.items():
@@ -130,7 +173,6 @@ def main():
         except Exception as e:
             print(f"Gemini API Error: {e}")
 
-    # 4. ประกอบร่างข้อความรายงาน
     msg = (
         f"🧭 <b>[MARKET FLOW & AI REGIME 4H]</b>\n"
         f"────────────────────────\n"
@@ -146,7 +188,7 @@ def main():
         f"{ai_insight}"
     )
     
-    send_telegram(msg)
+    send_telegram_msg(msg)
 
 if __name__ == "__main__":
     main()
