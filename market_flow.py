@@ -123,7 +123,7 @@ def main():
             print("Sending to Gemini API...")
             client = genai.Client(api_key=GEMINI_API_KEY.strip())
             response = client.models.generate_content(
-                model='gemini-2.5-flash',
+                model='gemini-3.6-flash',
                 contents=system_prompt,
             )
             ai_insight = response.text.strip()
