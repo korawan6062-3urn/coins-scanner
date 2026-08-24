@@ -13,7 +13,7 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 # จัดกลุ่มสินทรัพย์เพื่อดู Capital Rotation (ใช้เหรียญ Spot)
 SECTORS = {
-    "Macro & King": ["BTCUSDT", "PAXGUSDT"],
+    "Macro & King": ["BTCUSDT", "XAUUSDT"],
     "Tier 1 Bluechip": ["ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT"],
     "AI & Big Data": ["ARKMUSDT", "FETUSDT", "NEARUSDT", "RENDERUSDT", "TAOUSDT", "WLDUSDT"],
     "DeFi & RWA": ["AAVEUSDT", "DYDXUSDT", "ENAUSDT", "JUPUSDT", "LINKUSDT", "ONDOUSDT", "PENDLEUSDT"],
