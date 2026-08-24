@@ -2,7 +2,7 @@ name: Market Flow Scanner
 
 on:
   workflow_dispatch:
-  
+
 jobs:
   scan:
     runs-on: ubuntu-latest
@@ -17,11 +17,12 @@ jobs:
 
       - name: Install Dependencies
         run: |
-          pip install requests pandas numpy
+          pip install requests pandas google-generativeai
 
       - name: Run Market Flow
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
           python market_flow.py
