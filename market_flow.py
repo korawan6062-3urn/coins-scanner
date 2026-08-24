@@ -1,4 +1,3 @@
-# market_flow.py
 import os
 import sys
 import requests
@@ -14,7 +13,7 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 # จัดกลุ่มสินทรัพย์เพื่อดู Capital Rotation (ใช้เหรียญ Spot)
 SECTORS = {
-    "Macro & King": ["BTCUSDT", "PAXGUSDT"], # ใช้ PAXG แทนทองคำบนกระดาน Spot
+    "Macro & King": ["BTCUSDT", "PAXGUSDT"],
     "Tier 1 Bluechip": ["ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT"],
     "AI & Big Data": ["ARKMUSDT", "FETUSDT", "NEARUSDT", "RENDERUSDT", "TAOUSDT", "WLDUSDT"],
     "DeFi & RWA": ["AAVEUSDT", "DYDXUSDT", "ENAUSDT", "JUPUSDT", "LINKUSDT", "ONDOUSDT", "PENDLEUSDT"],
@@ -118,16 +117,13 @@ def main():
 {prompt_data}
 """
 
-ai_insight = "ไม่สามารถเชื่อมต่อ AI ได้ในขณะนี้ กรุณาประเมินจากตัวเลขด้านบน"
+    ai_insight = "ไม่สามารถเชื่อมต่อ AI ได้ในขณะนี้ กรุณาประเมินจากตัวเลขด้านบน"
     if GEMINI_API_KEY:
         try:
             print("Sending to Gemini API...")
-            # สร้าง client ด้วยวิธีของ google.genai
             client = genai.Client(api_key=GEMINI_API_KEY.strip())
-
-            # เรียกใช้งานโมเดลด้วยคำสั่งใหม่
             response = client.models.generate_content(
-                model='gemini-2.5-flash', # เปลี่ยนไปใช้โมเดลรุ่นใหม่ล่าสุด
+                model='gemini-2.5-flash',
                 contents=system_prompt,
             )
             ai_insight = response.text.strip()
