@@ -5,7 +5,7 @@ import requests
 import pandas as pd
 import time
 from concurrent.futures import ThreadPoolExecutor
-import google.generativeai as genai
+from google import genai
 
 # --- ดึง Token จาก GitHub Secrets ---
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
@@ -118,13 +118,18 @@ def main():
 {prompt_data}
 """
 
-    ai_insight = "ไม่สามารถเชื่อมต่อ AI ได้ในขณะนี้ กรุณาประเมินจากตัวเลขด้านบน"
+ai_insight = "ไม่สามารถเชื่อมต่อ AI ได้ในขณะนี้ กรุณาประเมินจากตัวเลขด้านบน"
     if GEMINI_API_KEY:
         try:
             print("Sending to Gemini API...")
-            genai.configure(api_key=GEMINI_API_KEY.strip())
-            model = genai.GenerativeModel('gemini-1.5-flash')
-            response = model.generate_content(system_prompt)
+            # สร้าง client ด้วยวิธีของ google.genai
+            client = genai.Client(api_key=GEMINI_API_KEY.strip())
+
+            # เรียกใช้งานโมเดลด้วยคำสั่งใหม่
+            response = client.models.generate_content(
+                model='gemini-2.5-flash', # เปลี่ยนไปใช้โมเดลรุ่นใหม่ล่าสุด
+                contents=system_prompt,
+            )
             ai_insight = response.text.strip()
         except Exception as e:
             print(f"Gemini API Error: {e}")
