@@ -1,15 +1,29 @@
+# market_flow.py
 import os
 import sys
 import requests
 import pandas as pd
-import numpy as np
 import time
+from concurrent.futures import ThreadPoolExecutor
+import google.generativeai as genai
 
-# --- ดึง Token จาก Secrets ---
+# --- ดึง Token จาก GitHub Secrets ---
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-def get_binance_spot_candles(symbol, interval="4h", limit=200):
+# จัดกลุ่มสินทรัพย์เพื่อดู Capital Rotation (ใช้เหรียญ Spot)
+SECTORS = {
+    "Macro & King": ["BTCUSDT", "PAXGUSDT"], # ใช้ PAXG แทนทองคำบนกระดาน Spot
+    "Tier 1 Bluechip": ["ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT"],
+    "AI & Big Data": ["ARKMUSDT", "FETUSDT", "NEARUSDT", "RENDERUSDT", "TAOUSDT", "WLDUSDT"],
+    "DeFi & RWA": ["AAVEUSDT", "DYDXUSDT", "ENAUSDT", "JUPUSDT", "LINKUSDT", "ONDOUSDT", "PENDLEUSDT"],
+    "Layer 1 & 0": ["ADAUSDT", "APTUSDT", "ATOMUSDT", "AVAXUSDT", "DOTUSDT", "GRTUSDT", "ICPUSDT", "INJUSDT", "KASUSDT", "PYTHUSDT", "SEIUSDT", "SUIUSDT"],
+    "Layer 2": ["ARBUSDT", "MANTAUSDT", "POLUSDT", "OPUSDT", "STRKUSDT", "TIAUSDT", "ZKUSDT"],
+    "Memes & Beta": ["DOGEUSDT", "GALAUSDT", "PEPEUSDT", "RUNEUSDT", "SANDUSDT", "SHIBUSDT"]
+}
+
+def get_binance_spot_candles(symbol, interval="4h", limit=10):
     """ดึงข้อมูล Spot ตรงจาก Binance Vision (เสถียร 100% ไม่โดนบล็อก IP)"""
     endpoints = [
         f"https://data-api.binance.vision/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}",
@@ -18,7 +32,7 @@ def get_binance_spot_candles(symbol, interval="4h", limit=200):
     for url in endpoints:
         try:
             res = requests.get(url, timeout=10).json()
-            if isinstance(res, list) and len(res) >= 100:
+            if isinstance(res, list) and len(res) >= 2:
                 df = pd.DataFrame(res, columns=[
                     "open_time", "open", "high", "low", "close", "volume",
                     "close_time", "quote_volume", "trades", "taker_buy_base",
@@ -31,68 +45,16 @@ def get_binance_spot_candles(symbol, interval="4h", limit=200):
             continue
     return None
 
-def analyze_ichimoku_cloud(df):
-    """คำนวณเมฆ Ichimoku บนแท่ง 4H ปิดสมบูรณ์ล่าสุด (iloc[-2])"""
-    try:
-        tenkan = (df["high"].rolling(9).max() + df["low"].rolling(9).min()) / 2
-        kijun = (df["high"].rolling(26).max() + df["low"].rolling(26).min()) / 2
-        span_a = ((tenkan + kijun) / 2).shift(26)
-        span_b = ((df["high"].rolling(52).max() + df["low"].rolling(52).min()) / 2).shift(26)
-
-        close_val = df["close"].iloc[-2]
-        span_a_val = span_a.iloc[-2]
-        span_b_val = span_b.iloc[-2]
-
-        top_kumo = max(span_a_val, span_b_val)
-        bot_kumo = min(span_a_val, span_b_val)
-
-        if close_val > top_kumo:
-            status = "BULLISH"
-        elif close_val < bot_kumo:
-            status = "BEARISH"
-        else:
-            status = "SIDEWAY"
-
-        prev_close = df["close"].iloc[-3]
-        change_pct = ((close_val - prev_close) / prev_close) * 100
-
-        return status, close_val, change_pct
-    except Exception:
-        return "UNKNOWN", 0.0, 0.0
-
-def evaluate_regime(btc_status, ethbtc_status):
-    """วิเคราะห์กระแสเงินทุนตาม Matrix สากล"""
-    if btc_status == "BULLISH" and ethbtc_status == "BULLISH":
-        title = "🚀 FULL ALTCOIN SEASON"
-        desc = "BTC ขาขึ้น และ ETH/BTC แข็งแกร่งกว่า เงินล้นเข้าเก็งกำไรใน Altcoins"
-        bias = "เน้นเปิด LONG เหรียญ Altcoins ตามสัญญาณ 15M"
-
-    elif btc_status == "BULLISH" and ethbtc_status == "BEARISH":
-        title = "👑 BTC SOLO RUN"
-        desc = "BTC ขึ้นเดี่ยว แต่เหรียญลูกอ่อนแอ เงินถูกดูดกลับเข้าเหรียญแม่"
-        bias = "โฟกัสเทรด BTC / ชะลอการเปิด Long Altcoins"
-
-    elif btc_status == "BEARISH" and ethbtc_status == "BEARISH":
-        title = "🩸 ALTCOIN BLEEDING / DANGER"
-        desc = "BTC ย่อตัว และเหรียญลูกโดนเทขายหนักกว่าปกติ (ความเสี่ยงสูง)"
-        bias = "หาจังหวะ SHORT Altcoins หรือ ถือ Cash 100%"
-
-    elif btc_status == "BEARISH" and ethbtc_status == "BULLISH":
-        title = "🛡 ALTCOIN RESISTANCE"
-        desc = "BTC อ่อนแรง แต่เหรียญลูกบางกลุ่มยังฝืนตลาดและมีแรงพยุง"
-        bias = "เล่นสั้นเฉพาะเหรียญ Top ที่ยืนเหนือเมฆ 4H"
-
-    elif btc_status == "SIDEWAY" and ethbtc_status == "BULLISH":
-        title = "🔄 ALTCOIN ROTATION"
-        desc = "BTC พักตัวนิ่ง เงินหมุนเวียนเก็งกำไรในเหรียญ Altcoins ต้นรอบ"
-        bias = "ดักเข้าเหรียญ 15M Golden Cross / Over 0"
-
-    else:
-        title = "⚪️ CHOPPY / NEUTRAL MARKET"
-        desc = "ตลาดพักฐาน ไร้ทิศทางชัดเจนทั้ง BTC และเหรียญลูก"
-        bias = "ลด Position Size และรอสัญญาณเลือกทาง"
-
-    return title, desc, bias
+def get_4h_performance(symbol):
+    """คำนวณ % เปลี่ยนแปลงของแท่ง 4H ปิดสมบูรณ์ล่าสุด"""
+    df = get_binance_spot_candles(symbol, interval="4h", limit=5)
+    if df is None or len(df) < 2: return symbol, 0.0
+    
+    close_val = df["close"].iloc[-2]  # แท่ง 4H ที่ปิดแล้วล่าสุด
+    prev_close = df["close"].iloc[-3] # แท่งก่อนหน้า
+    
+    pct_change = ((close_val - prev_close) / prev_close) * 100
+    return symbol, pct_change
 
 def send_telegram(message):
     """ส่งข้อความเข้า Telegram พร้อมระบบ Fallback Plain Text"""
@@ -101,49 +63,89 @@ def send_telegram(message):
         return
 
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
+    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "HTML"}
     try:
         res = requests.post(url, json=payload, timeout=10)
         if res.status_code != 200:
-            plain_text = message.replace("*", "").replace("`", "").replace("_", "")
+            # Fallback หากมีปัญหา HTML tags
+            plain_text = message.replace("<b>", "").replace("</b>", "").replace("<code>", "").replace("</code>", "")
             requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": plain_text}, timeout=10)
         print("Telegram message sent successfully.")
     except Exception as e:
         print(f"Telegram Exception: {e}")
 
 def main():
-    print("Fetching Binance Spot 4H Candles...")
-    df_btc = get_binance_spot_candles("BTCUSDT", interval="4h", limit=200)
-    df_ethbtc = get_binance_spot_candles("ETHBTC", interval="4h", limit=200)
+    print("Fetching Market Performance Data...")
+    
+    # 1. ดึงข้อมูลทุกเหรียญพร้อมกัน (Threading ช่วยให้เสร็จภายใน 2-3 วินาที)
+    all_symbols = [coin for group in SECTORS.values() for coin in group]
+    results = {}
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        for sym, pct in executor.map(get_4h_performance, all_symbols):
+            results[sym] = pct
+            
+    # 2. คำนวณค่าเฉลี่ยของแต่ละ Sector
+    sector_perf = {}
+    for sector, coins in SECTORS.items():
+        valid_coins = [results[c] for c in coins if c in results]
+        avg_pct = sum(valid_coins) / len(valid_coins) if valid_coins else 0.0
+        sector_perf[sector] = avg_pct
+        
+    btc_perf = results.get("BTCUSDT", 0.0)
+    gold_perf = results.get("PAXGUSDT", 0.0) # ใช้ PaxG เป็น Proxy ทองคำบน Spot
+    
+    # 3. เตรียมข้อมูลส่งให้ AI วิเคราะห์
+    prompt_data = (
+        f"ข้อมูลผลตอบแทนในกรอบ 4 ชั่วโมงล่าสุด (4H % Change):\n"
+        f"- BTC: {btc_perf:.2f}%\n"
+        f"- ทองคำ (PAXG): {gold_perf:.2f}%\n\n"
+        f"ค่าเฉลี่ยผลตอบแทนรายกลุ่ม (Sector Average % Change):\n"
+    )
+    for s, p in sector_perf.items():
+        if "Macro" not in s:
+            prompt_data += f"- {s}: {p:.2f}%\n"
 
-    if df_btc is None or df_ethbtc is None:
-        print("Error: Could not retrieve candles from Binance Vision.")
-        return
+    system_prompt = f"""
+คุณคือนักวิเคราะห์ Quant เชิงมหภาค (Macro Quant Analyst)
+จงวิเคราะห์ทิศทางกระแสเงินทุน (Capital Rotation) จากข้อมูล % Change 4H นี้
+เขียนรายงานภาษาไทยสั้นๆ กระชับ ไม่เกิน 5 บรรทัด โดยสรุป 3 ประเด็นหลัก (ใช้ Emojis ตกแต่ง):
+1. ทิศทางมหภาค: เงินไหลเข้า Risk-On (BTC) หรือ Risk-Off (ทองคำ)?
+2. สภาวะเงินหมุนเวียน (Rotation): เทียบ BTC กับกลุ่ม Altcoins เงินกำลังเทไปฝั่งไหน? ใครคือ Sector ผู้นำ?
+3. กลยุทธ์พอร์ต (Action): ตลาดแบบนี้ควรเทรดฝั่งไหน กลุ่มไหน หรือควรชะลอการเทรด?
 
-    btc_status, btc_price, btc_chg = analyze_ichimoku_cloud(df_btc)
-    ethbtc_status, ethbtc_price, ethbtc_chg = analyze_ichimoku_cloud(df_ethbtc)
+ห้ามเขียนเกริ่นนำ ให้ตอบผลการวิเคราะห์ทันที
+ข้อมูล:
+{prompt_data}
+"""
 
-    title, desc, bias = evaluate_regime(btc_status, ethbtc_status)
+    ai_insight = "ไม่สามารถเชื่อมต่อ AI ได้ในขณะนี้ กรุณาประเมินจากตัวเลขด้านบน"
+    if GEMINI_API_KEY:
+        try:
+            print("Sending to Gemini API...")
+            genai.configure(api_key=GEMINI_API_KEY.strip())
+            model = genai.GenerativeModel('gemini-1.5-flash')
+            response = model.generate_content(system_prompt)
+            ai_insight = response.text.strip()
+        except Exception as e:
+            print(f"Gemini API Error: {e}")
 
-    def icon(s):
-        return "🟢" if s == "BULLISH" else ("🔴" if s == "BEARISH" else "⚪️")
-
-    msg = [
-        "🌐 *[MARKET REGIME & MONEY FLOW 4H]*",
-        "────────────────────────",
-        "📊 *4H DATA OVERVIEW (Spot)*",
-        f"  • BTC Price    : `${btc_price:,.1f}` ({btc_chg:+.2f}%) | {icon(btc_status)} *{btc_status}*",
-        f"  • ETH/BTC Ratio: `{ethbtc_price:.5f}` ({ethbtc_chg:+.2f}%) | {icon(ethbtc_status)} *{ethbtc_status}*",
-        "────────────────────────",
-        f"🎯 *MARKET STATE:*\n  *{title}*",
-        f"  {desc}",
-        "",
-        f"💡 *TRADING PLAYBOOK:*\n  • {bias}",
-        "────────────────────────",
-        "📌 *เกณฑ์การคำนวณ:* Ichimoku Cloud (9, 26, 52, 26) บนแท่ง 4H ปิดสมบูรณ์"
-    ]
-
-    send_telegram("\n".join(msg))
+    # 4. ประกอบร่างข้อความรายงาน
+    msg = (
+        f"🧭 <b>[MARKET FLOW & AI REGIME 4H]</b>\n"
+        f"────────────────────────\n"
+        f"<b>📊 Sector Performance (4H):</b>\n"
+        f"👑 BTC: <code>{btc_perf:+.2f}%</code> | 🥇 Gold: <code>{gold_perf:+.2f}%</code>\n"
+        f"💎 Tier 1: <code>{sector_perf['Tier 1 Bluechip']:+.2f}%</code>\n"
+        f"🧠 AI: <code>{sector_perf['AI & Big Data']:+.2f}%</code>\n"
+        f"🏗 L1/L0: <code>{sector_perf['Layer 1 & 0']:+.2f}%</code> | L2: <code>{sector_perf['Layer 2']:+.2f}%</code>\n"
+        f"🏦 DeFi: <code>{sector_perf['DeFi & RWA']:+.2f}%</code>\n"
+        f"🚀 Memes: <code>{sector_perf['Memes & Beta']:+.2f}%</code>\n"
+        f"────────────────────────\n"
+        f"<b>🤖 AI Executive Summary:</b>\n"
+        f"{ai_insight}"
+    )
+    
+    send_telegram(msg)
 
 if __name__ == "__main__":
     main()
