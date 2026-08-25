@@ -71,7 +71,7 @@ def get_gateio_candles(symbol, timeframe, limit=60):
 
 def get_kucoin_candles(symbol, timeframe, limit=60):
     base_sym = symbol[:-4] if symbol.endswith("USDT") else symbol
-    tf_map = {"5m": "5min", "15m": "15min", "4h": "4hour"}
+    tf_map = {"5m": "5min", "15m": "15min", "1h": "1hour", "4h": "4hour"}
     url = f"https://api.kucoin.com/api/v1/market/candles?type={tf_map.get(timeframe, timeframe)}&symbol={base_sym}-USDT"
     try:
         res = http.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=4).json()
@@ -91,13 +91,13 @@ def fetch_candles(symbol, timeframe, limit=60):
 # ==========================================
 # PERFORMANCE ANALYSIS & AI REGIME
 # ==========================================
-def get_4h_performance(symbol):
-    """คำนวณ % เปลี่ยนแปลงของแท่ง 4H ปิดสมบูรณ์ล่าสุด"""
-    df = fetch_candles(symbol, timeframe="4h", limit=60)
+def get_1h_performance(symbol):
+    """คำนวณ % เปลี่ยนแปลงของแท่ง 1H ปิดสมบูรณ์ล่าสุด"""
+    df = fetch_candles(symbol, timeframe="1h", limit=60)
     if df is None or len(df) < 3: 
         return symbol, 0.0
     
-    close_val = df["close"].iloc[-2]  # แท่ง 4H ที่ปิดแล้วล่าสุด
+    close_val = df["close"].iloc[-2]  # แท่ง 1H ที่ปิดแล้วล่าสุด
     prev_close = df["close"].iloc[-3] # แท่งก่อนหน้า
     
     pct_change = ((close_val - prev_close) / prev_close) * 100
@@ -125,7 +125,7 @@ def main():
     all_symbols = [coin for group in SECTORS.values() for coin in group]
     results = {}
     with ThreadPoolExecutor(max_workers=10) as executor:
-        for sym, pct in executor.map(get_4h_performance, all_symbols):
+        for sym, pct in executor.map(get_1h_performance, all_symbols):
             results[sym] = pct
             
     sector_perf = {}
@@ -138,7 +138,7 @@ def main():
     gold_perf = results.get("XAUUSDT", 0.0)
     
     prompt_data = (
-        f"ข้อมูลผลตอบแทนในกรอบ 4 ชั่วโมงล่าสุด (4H % Change):\n"
+        f"ข้อมูลผลตอบแทนในกรอบ 1 ชั่วโมงล่าสุด (1H % Change):\n"
         f"- BTC: {btc_perf:.2f}%\n"
         f"- ทองคำ (XAU): {gold_perf:.2f}%\n\n"
         f"ค่าเฉลี่ยผลตอบแทนรายกลุ่ม (Sector Average % Change):\n"
@@ -149,7 +149,7 @@ def main():
 
     system_prompt = f"""
 คุณคือนักวิเคราะห์ Quant เชิงมหภาค (Macro Quant Analyst)
-จงวิเคราะห์ทิศทางกระแสเงินทุน (Capital Rotation) จากข้อมูล % Change 4H นี้
+จงวิเคราะห์ทิศทางกระแสเงินทุน (Capital Rotation) จากข้อมูล % Change 1H นี้
 เขียนรายงานภาษาไทยสั้นๆ กระชับ ไม่เกิน 5 บรรทัด โดยสรุป 3 ประเด็นหลัก (ใช้ Emojis ตกแต่ง):
 1. ทิศทางมหภาค: เงินไหลเข้า Risk-On (BTC) หรือ Risk-Off (ทองคำ)?
 2. สภาวะเงินหมุนเวียน (Rotation): เทียบ BTC กับกลุ่ม Altcoins เงินกำลังเทไปฝั่งไหน? ใครคือ Sector ผู้นำ?
@@ -174,9 +174,9 @@ def main():
             print(f"Gemini API Error: {e}")
 
     msg = (
-        f"🧭 <b>[MARKET FLOW & AI REGIME 4H]</b>\n"
+        f"🧭 <b>[MARKET FLOW & AI REGIME 1H]</b>\n"
         f"────────────────────────\n"
-        f"<b>📊 Sector Performance (4H):</b>\n"
+        f"<b>📊 Sector Performance (1H):</b>\n"
         f"👑 BTC: <code>{btc_perf:+.2f}%</code> | 🥇 Gold: <code>{gold_perf:+.2f}%</code>\n"
         f"💎 Tier 1: <code>{sector_perf['Tier 1 Bluechip']:+.2f}%</code>\n"
         f"🧠 AI: <code>{sector_perf['AI & Big Data']:+.2f}%</code>\n"
