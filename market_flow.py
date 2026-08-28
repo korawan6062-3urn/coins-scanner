@@ -11,25 +11,24 @@ warnings.filterwarnings("ignore")
 http = requests.Session()
 http.headers.update({"User-Agent": "Mozilla/5.0"})
 
-# ======================== 1. CONFIG & WATCHLIST (CORE เดิม) ========================
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+# ======================== 1. CONFIGURATION & TIER MAP ========================
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 
-SECTORS = {
-    "Macro Core": ["BTCUSDT", "XAUUSDT"],
-    "Tier 1": ["ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT"],
-    "PoW": ["BCHUSDT", "ETCUSDT", "KASUSDT", "LTCUSDT", "ZECUSDT"],
-    "Layer 1": ["APTUSDT", "AVAXUSDT", "INJUSDT", "NEARUSDT", "SUIUSDT"],
-    "Layer 2": ["ARBUSDT", "OPUSDT", "POLUSDT"],
-    "RWA": ["ONDOUSDT"],
-    "AI": ["ARKMUSDT", "FETUSDT", "RENDERUSDT", "TAOUSDT", "WLDUSDT"],
-    "DeFi": ["AAVEUSDT", "DYDXUSDT", "ENAUSDT", "PENDLEUSDT", "UNIUSDT"],
-    "Infra": ["GRTUSDT", "JUPUSDT", "LINKUSDT", "PYTHUSDT"]
+TIER_STRUCTURE = {
+    "BTCUSDT": "Macro Core", "XAUUSDT": "Macro Core",
+    "ETHUSDT": "Tier 1", "SOLUSDT": "Tier 1", "BNBUSDT": "Tier 1", "XRPUSDT": "Tier 1",
+    "BCHUSDT": "PoW", "ETCUSDT": "PoW", "KASUSDT": "PoW", "LTCUSDT": "PoW", "ZECUSDT": "PoW",
+    "APTUSDT": "Layer 1", "AVAXUSDT": "Layer 1", "INJUSDT": "Layer 1", "NEARUSDT": "Layer 1", "SUIUSDT": "Layer 1",
+    "ARBUSDT": "Layer 2", "OPUSDT": "Layer 2", "POLUSDT": "Layer 2",
+    "ONDOUSDT": "RWA",
+    "ARKMUSDT": "AI", "FETUSDT": "AI", "RENDERUSDT": "AI", "TAOUSDT": "AI", "WLDUSDT": "AI",
+    "AAVEUSDT": "DeFi", "DYDXUSDT": "DeFi", "ENAUSDT": "DeFi", "PENDLEUSDT": "DeFi", "UNIUSDT": "DeFi",
+    "GRTUSDT": "Infra", "JUPUSDT": "Infra", "LINKUSDT": "Infra", "PYTHUSDT": "Infra"
 }
 
-WATCHLIST = [coin for group in SECTORS.values() for coin in group]
-TIER_MAP = {coin: sector for sector, coins in SECTORS.items() for coin in coins}
+WATCHLIST = list(TIER_STRUCTURE.keys())
 
 def format_price(val):
     if pd.isna(val): return "0.00"
@@ -38,13 +37,13 @@ def format_price(val):
     elif abs(val) >= 1: return f"{val:.4f}"
     else: return f"{val:.6f}"
 
-# ======================== 2. ROBUST DATA FETCHER (CORE เดิม) ========================
-def get_binance_candles(symbol, timeframe="1h", limit=250):
+# ======================== 2. ROBUST DATA FETCHER (CORE เดิมที่เสถียรที่สุด) ========================
+def get_binance_candles_1h(symbol, limit=250):
     if symbol in ["XAUUSDT", "XAUTUSDT"]: return None
     endpoints = [
-        f"https://fapi.binance.com/fapi/v1/klines?symbol={symbol}&interval={timeframe}&limit={limit}",
-        f"https://data-api.binance.vision/api/v3/klines?symbol={symbol}&interval={timeframe}&limit={limit}",
-        f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={timeframe}&limit={limit}"
+        f"https://fapi.binance.com/fapi/v1/klines?symbol={symbol}&interval=1h&limit={limit}",
+        f"https://data-api.binance.vision/api/v3/klines?symbol={symbol}&interval=1h&limit={limit}",
+        f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval=1h&limit={limit}"
     ]
     for url in endpoints:
         try:
@@ -56,10 +55,10 @@ def get_binance_candles(symbol, timeframe="1h", limit=250):
         except: continue
     return None
 
-def get_gateio_candles(symbol, timeframe="1h", limit=250):
+def get_gateio_candles_1h(symbol, limit=250):
     base_sym = symbol[:-4] if symbol.endswith("USDT") else symbol
     pair = f"{base_sym}_USDT"
-    url = f"https://api.gateio.ws/api/v4/futures/usdt/candlesticks?contract={pair}&interval={timeframe}&limit={limit}"
+    url = f"https://api.gateio.ws/api/v4/futures/usdt/candlesticks?contract={pair}&interval=1h&limit={limit}"
     try:
         res = http.get(url, timeout=5).json()
         if isinstance(res, list) and len(res) >= 200:
@@ -68,7 +67,7 @@ def get_gateio_candles(symbol, timeframe="1h", limit=250):
     except: pass
     return None
 
-def get_kucoin_candles(symbol, timeframe="1h", limit=250):
+def get_kucoin_candles_1h(symbol):
     base_sym = symbol[:-4] if symbol.endswith("USDT") else symbol
     url = f"https://api.kucoin.com/api/v1/market/candles?type=1hour&symbol={base_sym}-USDT"
     try:
@@ -80,59 +79,70 @@ def get_kucoin_candles(symbol, timeframe="1h", limit=250):
     return None
 
 def fetch_candles(symbol):
-    df = get_binance_candles(symbol)
+    df = get_binance_candles_1h(symbol)
     if df is not None: return df
-    df = get_gateio_candles(symbol)
+    df = get_gateio_candles_1h(symbol)
     if df is not None: return df
-    return get_kucoin_candles(symbol)
+    return get_kucoin_candles_1h(symbol)
 
-# ======================== 3. STRUCTURAL ANALYSIS ========================
+# ======================== 3. 1H STRUCTURAL ANALYSIS ENGINE ========================
 def analyze_1h_structure(symbol):
     df = fetch_candles(symbol)
     if df is None or len(df) < 200: 
         return symbol, 0.0, 1.0, "CHOPPY", "NONE", "", {}
 
     try:
+        # แท่งปัจจุบัน (ยังไม่ปิด) [-1], แท่งก่อนหน้า (ปิดแล้ว) [-2], แท่งก่อนนู้น [-3]
         c_closed = df["close"].iloc[-2]
         o_closed = df["open"].iloc[-2]
         h_closed = df["high"].iloc[-2]
         l_closed = df["low"].iloc[-2]
         
+        # --- Macro Flow Data ---
         prev_close = df["close"].iloc[-3]
         pct_change = ((c_closed - prev_close) / prev_close) * 100
         vol_current = df["volume"].iloc[-2]
         vol_avg = df["volume"].iloc[-26:-2].mean()
         vol_surge = (vol_current / vol_avg) if vol_avg > 0 else 1.0
 
+        # --- EMAs ---
         ema21_series = df["close"].ewm(span=21, adjust=False).mean()
         ema35_series = df["close"].ewm(span=35, adjust=False).mean()
         ema89_series = df["close"].ewm(span=89, adjust=False).mean()
         ema200_series = df["close"].ewm(span=200, adjust=False).mean()
         
-        ema21, ema35, ema89, ema200 = ema21_series.iloc[-2], ema35_series.iloc[-2], ema89_series.iloc[-2], ema200_series.iloc[-2]
+        ema21, ema35 = ema21_series.iloc[-2], ema35_series.iloc[-2]
+        ema89, ema200 = ema89_series.iloc[-2], ema200_series.iloc[-2]
         ema21_prev, ema35_prev = ema21_series.iloc[-3], ema35_series.iloc[-3]
 
+        # MACD (สำหรับดู Divergence)
         macd_line = df["close"].ewm(span=12, adjust=False).mean() - df["close"].ewm(span=26, adjust=False).mean()
         macd_sig = macd_line.ewm(span=9, adjust=False).mean()
         macd_hist = macd_line - macd_sig
         
+        # --- สภาวะเทรนด์ 1H ---
         regime = "CHOPPY"
         if (ema89 > ema200) and (ema21 > ema35): regime = "BUY"
         elif (ema89 < ema200) and (ema21 < ema35): regime = "SELL"
 
+        # --- วิเคราะห์พฤติกรรมราคา (Price Action) ---
         dist_89_pct = (abs(c_closed - ema89) / ema89) * 100
+        
         body = abs(o_closed - c_closed)
         lower_wick = min(o_closed, c_closed) - l_closed
         upper_wick = h_closed - max(o_closed, c_closed)
         
         is_bull_pinbar = (lower_wick > (1.5 * body)) and (lower_wick > upper_wick)
         is_bear_pinbar = (upper_wick > (1.5 * body)) and (upper_wick > lower_wick)
+        
         touch_ema89 = (l_closed <= ema89 <= h_closed) or (dist_89_pct < 0.3)
         cross_up = (ema21_prev <= ema35_prev) and (ema21 > ema35)
         cross_dn = (ema21_prev >= ema35_prev) and (ema21 < ema35)
 
-        bucket, fact_str = "NONE", ""
+        bucket = "NONE"
+        fact_str = ""
 
+        # ลอจิกการคัดกรองจัดกลุ่ม
         if dist_89_pct > 3.0:
             bucket = "AVOID"
             fact_str = f"ราคาตึงจัด ห่าง EMA89 ถึง {dist_89_pct:.2f}% เสี่ยงโดนเทขายทำกำไร"
@@ -149,6 +159,7 @@ def analyze_1h_structure(symbol):
             elif cross_dn:
                 bucket, fact_str = "SELL", "EMA 21 ตัด 35 ลง ยืนยันเทรนด์ขาลงกดดันต่อ"
         
+        # ตรวจสอบ Divergence ง่ายๆ (Reversal)
         if bucket == "NONE":
             if l_closed < df["low"].iloc[-10:-2].min() and macd_hist.iloc[-2] > macd_hist.iloc[-10:-2].min():
                 if regime == "SELL" or ema89 < ema200:
@@ -164,34 +175,38 @@ def analyze_1h_structure(symbol):
     except Exception:
         return symbol, 0.0, 1.0, "CHOPPY", "NONE", "", {}
 
-# ======================== 4. SESSION PROTOCOL & TELEGRAM ========================
+# ======================== 4. SESSION PROTOCOL ========================
 def get_session_context():
     tz = timezone(timedelta(hours=7))
     hour = datetime.now(tz).hour
     
-    if 7 <= hour < 14: return "ตลาดเอเชีย (Asia / วอลุ่มซึม)", "ระวัง False Breakout ทับมือรอตลาดยุโรป หรือเข้าเฉพาะตัวที่ Rejection ชัดๆ"
-    elif 14 <= hour < 19: return "ตลาดลอนดอน (London / ฟอร์มเทรนด์)", "วอลุ่มเข้า รันเทรนด์ตามโครงสร้าง 1H ได้ ให้โฟกัสเหรียญที่มี Volume Surge"
-    elif 19 <= hour < 23: return "ตลาดสหรัฐฯ (NY Open / ผันผวนสูงมาก)", "⚠️ ลด Margin 50% (ไฟ YELLOW) รอ 1H ปิดแท่งยืนยันแนวรับ ไม่เปิดสวนกลางแท่ง TP1 แล้วดัน SL บังทุนทันที"
-    else: return "ดึก (After Hours / วอลุ่มบาง)", "ชะลอเปิดออเดอร์ใหม่ ขยับ SL บังทุนไม้เก่า ล็อคกำไรเข้านอน"
+    if 7 <= hour < 14:
+        return "ตลาดเอเชีย (Asia / วอลุ่มซึม)", "ระวัง False Breakout ทับมือรอตลาดยุโรป หรือเข้าเฉพาะตัวที่ Rejection ชัดๆ"
+    elif 14 <= hour < 19:
+        return "ตลาดลอนดอน (London / ฟอร์มเทรนด์)", "วอลุ่มเข้า รันเทรนด์ตามโครงสร้าง 1H ได้ ให้โฟกัสเหรียญที่มี Volume Surge"
+    elif 19 <= hour < 23:
+        return "ตลาดสหรัฐฯ (NY Open / ผันผวนสูงมาก)", "⚠️ ลด Margin 50% (ไฟ YELLOW) รอ 1H ปิดแท่งยืนยันแนวรับ ไม่เปิดสวนกลางแท่ง TP1 แล้วดัน SL บังทุนทันที"
+    else:
+        return "ดึก (After Hours / วอลุ่มบาง)", "ชะลอเปิดออเดอร์ใหม่ ขยับ SL บังทุนไม้เก่า ล็อคกำไรเข้านอน"
 
 def send_telegram(message):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID: return
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "HTML", "disable_web_page_preview": True}
     try: 
-        res = http.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "HTML", "disable_web_page_preview": True}, timeout=8)
-        # 🛡️ Fallback: หาก AI แทรก HTML ผิดรูป (Error 400) ให้ส่งเป็นข้อความธรรมดาแทน ป้องกันการเงียบหาย
-        if res.status_code != 200:
-            print(f"⚠️ Telegram HTML Format Error: {res.text} -> กำลังส่งแบบ Plain Text แทน")
+        res = http.post(url, json=payload, timeout=8)
+        if res.status_code != 200: # ป้องกันบอทเงียบถ้ามีปัญหา HTML tags
             clean_msg = message.replace('<b>', '').replace('</b>', '').replace('<code>', '').replace('</code>', '').replace('<i>', '').replace('</i>', '')
             http.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": clean_msg, "disable_web_page_preview": True}, timeout=8)
-    except Exception as e:
-        print(f"❌ Telegram Post Error: {e}")
+    except: pass
 
 # ======================== 5. MAIN EXECUTION ========================
 def main():
-    print("🚀 ดึงข้อมูล 1H Structural Radar (Using Robust Core)...")
+    print("🚀 สแกนข้อมูล 1H Structural Radar (Using Original Core)...")
     
-    results, sector_pct = {}, {}
+    results = {}
+    sector_pct = {}
+    sector_counts = {}
     green_count, red_count = 0, 0
     crypto_data = []
     
@@ -202,7 +217,7 @@ def main():
             results[sym] = {"pct": pct, "vol": vol}
             
             if bucket != "NONE":
-                tier = TIER_MAP.get(sym, 'Other')
+                tier = TIER_STRUCTURE.get(sym, 'Other')
                 price = format_price(data.get('price', 0))
                 item_str = f"  • <b>{sym}</b> <code>[{tier}]</code> | ราคา: <code>{price}</code>\n    └ <i>Fact:</i> {fact_str}"
                 
@@ -211,17 +226,19 @@ def main():
                 elif bucket == "REVERSAL": action_rev.append(item_str)
                 elif bucket == "AVOID": action_avoid.append(item_str)
 
-    # คำนวณ Sector & Breadth อย่างปลอดภัย
-    for sector, coins in SECTORS.items():
-        valid_pct = [results[c]["pct"] for c in coins if c in results and c != "XAUUSDT"]
-        sector_pct[sector] = (sum(valid_pct) / len(valid_pct)) if valid_pct else 0.0
+    # ใช้วิธีคำนวณ Sector แบบปลอดภัย 100% ไม่มี KeyError แน่นอน
+    for sym, data in results.items():
+        if sym == "XAUUSDT": continue
+        sector = TIER_STRUCTURE.get(sym, "Other")
+        sector_pct[sector] = sector_pct.get(sector, 0.0) + data["pct"]
+        sector_counts[sector] = sector_counts.get(sector, 0) + 1
+        
+        crypto_data.append((sym, data["pct"], data["vol"]))
+        if data["pct"] > 0: green_count += 1
+        elif data["pct"] < 0: red_count += 1
 
-    for c in WATCHLIST:
-        if c != "XAUUSDT" and c in results:
-            pct_val = results[c]["pct"]
-            crypto_data.append((c, pct_val, results[c]["vol"]))
-            if pct_val > 0: green_count += 1
-            elif pct_val < 0: red_count += 1
+    for sec in sector_pct:
+        sector_pct[sec] = sector_pct[sec] / sector_counts[sec]
 
     crypto_data.sort(key=lambda x: x[1], reverse=True)
     top_gainers = [f"{s.replace('USDT','')} ({p:+.2f}%)" for s, p, v in crypto_data[:2]]
@@ -234,7 +251,7 @@ def main():
     btc_perf = results.get("BTCUSDT", {}).get("pct", 0.0)
     gold_perf = results.get("XAUUSDT", {}).get("pct", 0.0)
 
-    # --- AI PROMPT ---
+    # --- THE FACT-BASED AI PROMPT (STRICTLY GEMINI-3.6-FLASH) ---
     system_prompt = f"""
 คุณคือ Risk Manager หน้าที่ของคุณคือวิเคราะห์ข้อมูลแล้วสรุป "Fact (ข้อเท็จจริง)" และ "Action (แผน)" เป็น Bullet point สั้นๆ กระชับ ห้ามเขียนบรรยายยาว
 
@@ -245,48 +262,42 @@ BTC: {btc_perf:+.2f}% | XAU: {gold_perf:+.2f}%
 Gainers: {', '.join(top_gainers)} | Losers: {', '.join(top_losers)}
 Vol Surge: {', '.join(top_vol) if top_vol else 'ไม่มี'}
 
-[ฟอร์แมตการตอบ (ห้ามเปลี่ยน Layout ห้ามใส่คำเกริ่นนำ)]
+[ฟอร์แมตการตอบ (คัดลอกรูปแบบนี้ ห้ามใส่คำเกริ่นนำ)]
 🤖 <b>AI TACTICAL DIRECTIVE:</b>
 🛑 <b>สถานะตลาด:</b> [เช่น ลุยฝั่ง Long / ทับมือ / ระวังสับขาหลอกช่วงข่าว / ตลาดซึมรอเลือกทาง]
 
 📊 <b>สรุปกระแสเงิน 1H (Fact):</b>
 • [Fact 1: วิเคราะห์ทิศทางเงินอ้างอิงจากเขียว/แดง และ Gainer]
-• [Fact 2: วิเคราะห์วอลุ่มเชื่อมโยง เช่น มีวอลุ่มหนุนชัดเจน หรือ ทองคำขึ้นสวน]
+• [Fact 2: วิเคราะห์วอลุ่มและการเชื่อมโยง เช่น มีวอลุ่มหนุนชัดเจน หรือ ทองคำขึ้นสวนคริปโต]
 
 ⚠️ <b>กฎคุมความเสี่ยง (Session Rules):</b>
 • {session_rule}
 
 🎯 <b>แผนปฏิบัติการ (Action Plan):</b>
-• [สรุปว่าชั่วโมงนี้ควรทำอะไร โฟกัสไปที่ทิศทางไหน หรือควรงดเทรด]
+• [สรุปว่าชั่วโมงนี้ควรทำอะไร อิงจากรายการ BUY/SELL/REVERSAL/AVOID ที่ระบบสแกนเจอ]
 """
 
-    ai_insight = "⚠️ ขัดข้อง ไม่สามารถเชื่อมต่อ AI ได้ โปรดตรวจสอบ API หรือ โควต้าใช้งาน"
+    ai_insight = "⚠️ ขัดข้อง ไม่สามารถเชื่อมต่อ AI ได้ (gemini-3.6-flash)"
     if GEMINI_API_KEY:
         try:
             client = genai.Client(api_key=GEMINI_API_KEY.strip())
-            
-            # 🛡️ Auto-Model Fallback: ลำดับโมเดล ลองใช้ 3.6 ก่อนตามที่คุณสั่ง 
-            # ถ้า API คืนค่า 404 (ไม่พบโมเดล) จะสลับไปใช้ 1.5-flash ให้อัตโนมัติ งานจะได้ไม่สะดุด
-            models_to_try = ['gemini-3.6-flash', 'gemini-1.5-flash', 'gemini-2.0-flash']
-            
-            for model_name in models_to_try:
-                success = False
-                for attempt in range(1, 3):
-                    try:
-                        print(f"⏳ ส่งข้อมูลให้ AI ประมวลผลด้วยโมเดล: {model_name} [ครั้งที่ {attempt}/2]...")
-                        res = client.models.generate_content(model=model_name, contents=system_prompt)
-                        if res and res.text:
-                            ai_insight = res.text.strip()
-                            success = True
-                            print(f"✅ AI ประมวลผลสำเร็จ ({model_name})")
-                            break
-                    except Exception as e:
-                        print(f"⚠️ API Error ({model_name}): {e}")
-                        time.sleep(2)
-                if success:
-                    break # หลุดออกจากลูปเปลี่ยนโมเดลเมื่อยิงสำเร็จแล้ว
-        except Exception as e: 
-            print(f"❌ Gemini Setup Error: {e}")
+            # ล็อกโมเดลเดียว ห้ามเปลี่ยนตามคำสั่งอย่างเด็ดขาด
+            for attempt in range(1, 4):
+                try:
+                    print(f"⏳ ส่งข้อมูล AI: gemini-3.6-flash [Attempt {attempt}/3]...")
+                    response = client.models.generate_content(
+                        model='gemini-3.6-flash',
+                        contents=system_prompt,
+                    )
+                    if response and response.text:
+                        ai_insight = response.text.strip()
+                        print("✅ AI ประมวลผลสำเร็จ")
+                        break
+                except Exception as e:
+                    print(f"⚠️ API Error: {e}")
+                    time.sleep(2)
+        except Exception as e:
+            print(f"❌ Client Init Error: {e}")
 
     buy_str = "\n".join(action_buy[:3]) if action_buy else "  • (ไม่มีเหรียญเข้าเกณฑ์)"
     sell_str = "\n".join(action_sell[:3]) if action_sell else "  • (ไม่มีเหรียญเข้าเกณฑ์)"
@@ -315,8 +326,9 @@ Vol Surge: {', '.join(top_vol) if top_vol else 'ไม่มี'}
         f"────────────────────────────\n"
         f"{ai_insight}"
     )
+    
     send_telegram(msg)
-    print("✅ สแกน 1H เรียบร้อย")
+    print("✅ สแกนและส่งรายงาน 1H Structural Radar เรียบร้อย")
 
 if __name__ == "__main__":
     main()
