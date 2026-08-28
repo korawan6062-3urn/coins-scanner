@@ -192,18 +192,24 @@ def main():
 """
 
     # === คืนค่าบล็อกการยิง API แบบดั้งเดิมของคุณ 100% ===
-    ai_insight = "ไม่สามารถเชื่อมต่อ AI ได้ในขณะนี้"
+  ai_insight = "ไม่สามารถเชื่อมต่อ AI ได้ในขณะนี้"
     if GEMINI_API_KEY:
-        try:
-            print("Sending to Gemini API...")
-            client = genai.Client(api_key=GEMINI_API_KEY.strip())
-            response = client.models.generate_content(
-                model='gemini-3.6-flash',
-                contents=system_prompt,
-            )
-            ai_insight = response.text.strip()
-        except Exception as e:
-            print(f"Gemini API Error: {e}")
+        client = genai.Client(api_key=GEMINI_API_KEY.strip())
+        for attempt in range(1, 4):
+            try:
+                print(f"Sending to Gemini API (gemini-3.6-flash) [Attempt {attempt}/3]...")
+                response = client.models.generate_content(
+                    model='gemini-3.6-flash',
+                    contents=system_prompt,
+                )
+                if response and response.text:
+                    ai_insight = response.text.strip()
+                    print("Gemini API call successful.")
+                    break
+            except Exception as e:
+                print(f"Gemini API Error (Attempt {attempt}): {e}")
+                if attempt < 3:
+                    time.sleep(3)
     # ====================================================
 
     # --- สร้างข้อความสรุปส่งเข้า Telegram ---
