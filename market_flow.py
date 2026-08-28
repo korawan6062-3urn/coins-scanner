@@ -11,25 +11,28 @@ warnings.filterwarnings("ignore")
 http = requests.Session()
 http.headers.update({"User-Agent": "Mozilla/5.0"})
 
-# --- ดึง Token จาก GitHub Secrets ---
+# --- Token & API Key ---
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-# จัดกลุ่มสินทรัพย์ (ใช้โครงสร้าง Core เดิม 100%)
+# ==========================================
+# 📋 33+1 ASSETS STRUCTURE (อิงชุดล่าสุด 100%)
+# ==========================================
 SECTORS = {
-    "Macro & King": ["BTCUSDT", "XAUUSDT"],
-    "Tier 1 Bluechip": ["ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT"],
-    "AI & Big Data": ["ARKMUSDT", "FETUSDT", "NEARUSDT", "RENDERUSDT", "TAOUSDT", "WLDUSDT"],
-    "DeFi & RWA": ["AAVEUSDT", "DYDXUSDT", "ENAUSDT", "JUPUSDT", "LINKUSDT", "ONDOUSDT", "PENDLEUSDT"],
-    "Layer 1 & 0": ["ADAUSDT", "APTUSDT", "ATOMUSDT", "AVAXUSDT", "DOTUSDT", "GRTUSDT", "ICPUSDT", "INJUSDT", "KASUSDT", "PYTHUSDT", "SEIUSDT", "SUIUSDT"],
-    "Layer 2": ["ARBUSDT", "MANTAUSDT", "POLUSDT", "OPUSDT", "STRKUSDT", "TIAUSDT", "ZKUSDT"],
-    "Memes & Beta": ["DOGEUSDT", "GALAUSDT", "PEPEUSDT", "RUNEUSDT", "SANDUSDT", "SHIBUSDT"]
+    "Macro Core": ["BTCUSDT", "XAUUSDT"],
+    "Tier 1": ["ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT"],
+    "PoW": ["BCHUSDT", "ETCUSDT", "KASUSDT", "LTCUSDT", "ZECUSDT"],
+    "Layer 1": ["APTUSDT", "AVAXUSDT", "INJUSDT", "NEARUSDT", "SUIUSDT"],
+    "Layer 2": ["ARBUSDT", "OPUSDT", "POLUSDT"],
+    "RWA": ["ONDOUSDT"],
+    "AI": ["ARKMUSDT", "FETUSDT", "RENDERUSDT", "TAOUSDT", "WLDUSDT"],
+    "DeFi": ["AAVEUSDT", "DYDXUSDT", "ENAUSDT", "PENDLEUSDT", "UNIUSDT"],
+    "Infra": ["GRTUSDT", "JUPUSDT", "LINKUSDT", "PYTHUSDT"]
 }
 
 WATCHLIST = [coin for group in SECTORS.values() for coin in group]
-# ลดชื่อกลุ่มให้สั้นลงเพื่อแสดงผลท้ายชื่อเหรียญให้สวยงาม
-TIER_MAP = {coin: sector.split(" ")[0].replace("Tier", "Tier 1") for sector, coins in SECTORS.items() for coin in coins}
+TIER_MAP = {coin: sector for sector, coins in SECTORS.items() for coin in coins}
 
 def format_price(val):
     if pd.isna(val): return "0.00"
@@ -39,7 +42,7 @@ def format_price(val):
     else: return f"{val:.6f}"
 
 # ==========================================
-# ROUTER FETCHING LOGIC (ยึด Core เดิม 100% เพิ่มแค่ดึง Volume)
+# 🌐 CORE ROUTER FETCHER (Binance -> Gateio -> Kucoin)
 # ==========================================
 def get_binance_candles(symbol, timeframe="1h", limit=250):
     if symbol in ["XAUUSDT", "XAUTUSDT"]: return None
@@ -102,7 +105,7 @@ def fetch_candles(symbol, timeframe="1h", limit=250):
     return get_kucoin_candles(symbol, timeframe, limit)
 
 # ==========================================
-# 1H STRUCTURAL ANALYSIS (REPORTING UPDATE)
+# 📊 1H STRUCTURAL ANALYSIS (FACT-BASED)
 # ==========================================
 def analyze_1h_structure(symbol):
     df = fetch_candles(symbol, "1h", 250)
@@ -151,8 +154,7 @@ def analyze_1h_structure(symbol):
         cross_up = (ema21_prev <= ema35_prev) and (ema21 > ema35)
         cross_dn = (ema21_prev >= ema35_prev) and (ema21 < ema35)
 
-        bucket = "NONE"
-        fact_str = ""
+        bucket, fact_str = "NONE", ""
 
         if dist_89_pct > 3.0:
             bucket = "AVOID"
@@ -190,7 +192,7 @@ def get_session_context():
     hour = datetime.now(tz).hour
     if 7 <= hour < 14: return "ตลาดเอเชีย (Asia / วอลุ่มซึม)", "ระวัง False Breakout ทับมือรอตลาดยุโรป หรือเข้าเฉพาะตัวที่ Rejection ชัดๆ"
     elif 14 <= hour < 19: return "ตลาดลอนดอน (London / ฟอร์มเทรนด์)", "วอลุ่มเข้า รันเทรนด์ตามโครงสร้าง 1H ได้ ให้โฟกัสเหรียญที่มี Volume Surge"
-    elif 19 <= hour < 23: return "ตลาดสหรัฐฯ (NY Open / ผันผวนสูงมาก)", "⚠️ ลด Margin 50% (ไฟ YELLOW) รอ 1H ปิดแท่งยืนยันแนวรับ ไม่เปิดสวนกลางแท่ง TP1 แล้วดัน SL บังทุนทันที"
+    elif 19 <= hour < 23: return "ตลาดสหรัฐฯ & ข่าวเศรษฐกิจ (NY Open / ผันผวนสูงมาก)", "⚠️ ลด Margin 50% (ไฟ YELLOW) รอ 1H ปิดแท่งยืนยันแนวรับ ไม่เปิดสวนกลางแท่ง TP1 แล้วดัน SL บังทุนทันที"
     else: return "ดึก (After Hours / วอลุ่มบาง)", "ชะลอเปิดออเดอร์ใหม่ ขยับ SL บังทุนไม้เก่า ล็อคกำไรเข้านอน"
 
 def send_telegram_msg(message, parse_mode="HTML"):
@@ -198,20 +200,19 @@ def send_telegram_msg(message, parse_mode="HTML"):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     try:
         res = http.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": parse_mode, "disable_web_page_preview": True}, timeout=8)
-        # Fallback กันบอทเงียบถ้า AI พ่นแท็ก HTML ผิดรูป
         if res.status_code != 200:
             plain = message.replace("<b>", "").replace("</b>", "").replace("<code>", "").replace("</code>", "").replace("<i>", "").replace("</i>", "")
-            http.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": plain, "disable_web_page_preview": True}, timeout=8)
+            http.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": plain}, timeout=8)
     except Exception as e:
         print(f"Telegram Exception: {e}")
 
 # ==========================================
-# MAIN EXECUTION
+# 🚀 MAIN PIPELINE
 # ==========================================
 def main():
-    print("🚀 สแกนข้อมูล 1H Structural Radar (Original Core)...")
+    print("🚀 สแกนข้อมูล 1H Structural Radar (33+1 Assets)...")
     
-    results, sector_pct, sector_counts = {}, {}, {}
+    results, sector_pct = {}, {}
     green_count, red_count = 0, 0
     crypto_data = []
     
@@ -231,11 +232,12 @@ def main():
                 elif bucket == "REVERSAL": action_rev.append(item_str)
                 elif bucket == "AVOID": action_avoid.append(item_str)
 
-    # คำนวณ Sector & Breadth อย่างปลอดภัยอิงจาก Core
+    # คำนวณ Sector เฉลี่ย
     for sector, coins in SECTORS.items():
         valid_coins = [results[c]["pct"] for c in coins if c in results and c != "XAUUSDT"]
         sector_pct[sector] = sum(valid_coins) / len(valid_coins) if valid_coins else 0.0
 
+    # คำนวณ Market Breadth (33 คริปโต)
     for c in WATCHLIST:
         if c != "XAUUSDT" and c in results:
             pct_val = results[c]["pct"]
@@ -253,40 +255,32 @@ def main():
     btc_perf = results.get("BTCUSDT", {}).get("pct", 0.0)
     gold_perf = results.get("XAUUSDT", {}).get("pct", 0.0)
 
-    # --- THE FACT-BASED AI PROMPT (STRICTLY GEMINI 3.6 FLASH) ---
+    # --- GEMINI 3.6 FLASH STRICT INSTRUCTION ---
     system_prompt = f"""
 คุณคือ Risk Manager หน้าที่ของคุณคือวิเคราะห์ข้อมูลแล้วสรุป "Fact (ข้อเท็จจริง)" และ "Action (แผน)" เป็น Bullet point สั้นๆ กระชับ ห้ามเขียนบรรยายยาว
 
-[ข้อมูลตลาด 1H]
+[ข้อมูลตลาด 1H (33+1 Assets)]
 Session: {session_name}
 ทิศทาง: เขียว {green_count} / แดง {red_count}
 BTC: {btc_perf:+.2f}% | XAU: {gold_perf:+.2f}%
 Gainers: {', '.join(top_gainers)} | Losers: {', '.join(top_losers)}
 Vol Surge: {', '.join(top_vol) if top_vol else 'ไม่มี'}
 
-[ฟอร์แมตการตอบ (คัดลอกรูปแบบนี้ ห้ามใส่คำเกริ่นนำ)]
-🤖 <b>AI TACTICAL DIRECTIVE:</b>
-🛑 <b>สถานะตลาด:</b> [เช่น ลุยฝั่ง Long / ทับมือ / ระวังสับขาหลอกช่วงข่าว / ตลาดซึมรอเลือกทาง]
+[ฟอร์แมตการตอบ (ห้ามเปลี่ยน Layout ห้ามใส่คำเกริ่นนำ)]
+🛑 <b>สถานะ:</b> [เช่น เทรนด์จริงเริ่มวิ่ง ลุยตามแผน / ตลาดไซด์เวย์ ทับมือ / ผันผวนช่วงข่าว ระวังกวาด SL]
 
-📊 <b>สรุปกระแสเงิน 1H (Fact):</b>
-• [Fact 1: วิเคราะห์ทิศทางเงินอ้างอิงจากเขียว/แดง และ Gainer]
-• [Fact 2: วิเคราะห์วอลุ่มและการเชื่อมโยง เช่น มีวอลุ่มหนุนชัดเจน หรือ ทองคำขึ้นสวนคริปโต]
-
-⚠️ <b>กฎคุมความเสี่ยง (Session Rules):</b>
-• {session_rule}
-
-🎯 <b>แผนปฏิบัติการ (Action Plan):</b>
-• [สรุปว่าชั่วโมงนี้ควรทำอะไร อิงจากรายการ BUY/SELL/REVERSAL/AVOID ที่ระบบสแกนเจอ]
+• <b>ข้อเท็จจริงกระแสเงิน (Facts):</b> [สรุปทิศทางเงิน หมุนเข้า BTC, Altcoins หรือหนีเข้า Gold พร้อมระบุ Sector ผู้นำ และ Volume Surge]
+• <b>กฎคุมความเสี่ยง {session_name.split(' ')[0]}:</b> {session_rule}
+• <b>คำสั่งหน้างาน:</b> [สรุปเป้าโฟกัส อิงจากรายการ BUY/SELL/REVERSAL และสั่งห้ามไล่ราคาตัวที่ติดโซนเลี่ยงเทรด]
 """
 
     ai_insight = "⚠️ ขัดข้อง ไม่สามารถเชื่อมต่อ AI ได้ (gemini-3.6-flash)"
     if GEMINI_API_KEY:
         try:
             client = genai.Client(api_key=GEMINI_API_KEY.strip())
-            # บังคับใช้คำสั่งเดี่ยว gemini-3.6-flash เท่านั้น ไม่มีการเปลี่ยนโมเดลเด็ดขาด
             for attempt in range(1, 4):
                 try:
-                    print(f"⏳ Sending to Gemini API (gemini-3.6-flash) Attempt {attempt}/3...")
+                    print(f"⏳ Sending to Gemini API (gemini-3.6-flash) [Attempt {attempt}/3]...")
                     response = client.models.generate_content(
                         model='gemini-3.6-flash',
                         contents=system_prompt,
@@ -306,17 +300,21 @@ Vol Surge: {', '.join(top_vol) if top_vol else 'ไม่มี'}
     rev_str = "\n".join(action_rev[:3]) if action_rev else "  • (ไม่มีเหรียญเข้าเกณฑ์)"
     avoid_str = "\n".join(action_avoid[:3]) if action_avoid else "  • (ไม่มีเหรียญที่อันตรายชัดเจน)"
 
+    total_crypto = green_count + red_count
+    bull_pct = int((green_count / total_crypto * 100)) if total_crypto > 0 else 0
+
     msg = (
         f"🧭 <b>[1H MARKET FLOW & MACRO RADAR]</b>\n"
         f"────────────────────────────\n"
-        f"⏰ <b>เวลา:</b> {session_name}\n"
-        f"🌐 <b>ภาพรวม 1H:</b> 🟢 ขาขึ้น {green_count} | 🔴 ขาลง {red_count}\n\n"
+        f"⏰ <b>ช่วงเวลา:</b> {session_name}\n"
+        f"🌐 <b>ภาพรวมตลาด:</b> 🟢 {green_count} / 🔴 {red_count} (ฝั่งขึ้นครองตลาด {bull_pct}%)\n\n"
         f"📊 <b>Macro Performance (1H):</b>\n"
         f"👑 BTC: <code>{btc_perf:+.2f}%</code> | 🥇 Gold: <code>{gold_perf:+.2f}%</code>\n"
-        f"💎 Tier 1: <code>{sector_pct.get('Tier 1 Bluechip', 0.0):+.2f}%</code> | 🧠 AI: <code>{sector_pct.get('AI & Big Data', 0.0):+.2f}%</code>\n"
-        f"🏗 L1: <code>{sector_pct.get('Layer 1 & 0', 0.0):+.2f}%</code> | 🏦 DeFi: <code>{sector_pct.get('DeFi & RWA', 0.0):+.2f}%</code>\n"
-        f"🚀 Memes: <code>{sector_pct.get('Memes & Beta', 0.0):+.2f}%</code>\n\n"
-        f"⚡️ <b>Outliers & Volume Spike:</b>\n"
+        f"💎 Tier 1: <code>{sector_pct.get('Tier 1', 0.0):+.2f}%</code> | 🧠 AI: <code>{sector_pct.get('AI', 0.0):+.2f}%</code>\n"
+        f"🏗 L1: <code>{sector_pct.get('Layer 1', 0.0):+.2f}%</code> | ⚡ L2: <code>{sector_pct.get('Layer 2', 0.0):+.2f}%</code>\n"
+        f"🏦 DeFi: <code>{sector_pct.get('DeFi', 0.0):+.2f}%</code> | ⛏️ PoW: <code>{sector_pct.get('PoW', 0.0):+.2f}%</code>\n"
+        f"🏛 RWA: <code>{sector_pct.get('RWA', 0.0):+.2f}%</code> | 🔗 Infra: <code>{sector_pct.get('Infra', 0.0):+.2f}%</code>\n\n"
+        f"⚡️ <b>Outliers & Volume Spike (1H):</b>\n"
         f"🚀 <b>บวกแรง:</b> <code>{', '.join(top_gainers) if top_gainers else '-'}</code>\n"
         f"🩸 <b>ลบหนัก:</b> <code>{', '.join(top_losers) if top_losers else '-'}</code>\n"
         f"⚠️ <b>วอลุ่มพุ่ง:</b> <code>{', '.join(top_vol) if top_vol else 'ปกติ'}</code>\n"
@@ -327,11 +325,12 @@ Vol Surge: {', '.join(top_vol) if top_vol else 'ไม่มี'}
         f"🔄 <b>REVERSAL (Divergence / จบรอบ / False Break):</b>\n{rev_str}\n\n"
         f"⛔️ <b>โซนเลี่ยงเทรด (ปลายน้ำตึงจัด / ไซด์เวย์ไร้ทรง):</b>\n{avoid_str}\n"
         f"────────────────────────────\n"
+        f"🤖 <b>AI TACTICAL DIRECTIVE:</b>\n"
         f"{ai_insight}"
     )
     
     send_telegram_msg(msg)
-    print("✅ สแกนและส่งรายงาน 1H Structural Radar เรียบร้อย")
+    print("✅ สแกน 33+1 สินทรัพย์ และส่งรายงาน 1H เรียบร้อย")
 
 if __name__ == "__main__":
     main()
