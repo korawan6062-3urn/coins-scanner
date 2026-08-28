@@ -2,8 +2,7 @@ import os
 import requests
 import pandas as pd
 import warnings
-from datetime import datetime
-import pytz
+from datetime import datetime, timezone, timedelta
 from concurrent.futures import ThreadPoolExecutor
 from google import genai
 
@@ -98,7 +97,8 @@ def get_1h_performance(symbol):
     return symbol, pct_change, vol_surge
 
 def get_market_session():
-    tz = pytz.timezone('Asia/Bangkok')
+    # ใช้ Built-in module แทน pytz (UTC+7 สำหรับ Asia/Bangkok)
+    tz = timezone(timedelta(hours=7))
     now = datetime.now(tz)
     hour = now.hour
     
