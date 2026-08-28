@@ -191,18 +191,20 @@ def main():
 • คำแนะนำหน้างาน: [ระบุคำสั่งที่เกี่ยวข้องกับแผนเทรด เช่น ห้ามไล่ราคา Long, ให้รัน Plan A ดักย่อ, หรือระวังการกวาด Stop Loss]
 """
 
+    # === คืนค่าบล็อกการยิง API แบบดั้งเดิมของคุณ 100% ===
     ai_insight = "ไม่สามารถเชื่อมต่อ AI ได้ในขณะนี้"
     if GEMINI_API_KEY:
         try:
-            print("Sending Context to Gemini AI...")
+            print("Sending to Gemini API...")
             client = genai.Client(api_key=GEMINI_API_KEY.strip())
             response = client.models.generate_content(
-                model='gemini-2.5-flash',
+                model='gemini-3.6-flash',
                 contents=system_prompt,
             )
             ai_insight = response.text.strip()
         except Exception as e:
             print(f"Gemini API Error: {e}")
+    # ====================================================
 
     # --- สร้างข้อความสรุปส่งเข้า Telegram ---
     msg = (
