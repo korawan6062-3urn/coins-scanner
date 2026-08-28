@@ -1,5 +1,6 @@
 import os
 import sys
+import time
 import requests
 import pandas as pd
 import warnings
@@ -17,7 +18,7 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 # ==========================================
-# 📋 33+1 ASSETS STRUCTURE (อิงชุดล่าสุด 100%)
+# 📋 33+1 ASSETS STRUCTURE
 # ==========================================
 SECTORS = {
     "Macro Core": ["BTCUSDT", "XAUUSDT"],
@@ -274,7 +275,7 @@ Vol Surge: {', '.join(top_vol) if top_vol else 'ไม่มี'}
 • <b>คำสั่งหน้างาน:</b> [สรุปเป้าโฟกัส อิงจากรายการ BUY/SELL/REVERSAL และสั่งห้ามไล่ราคาตัวที่ติดโซนเลี่ยงเทรด]
 """
 
-    ai_insight = "⚠️ ขัดข้อง ไม่สามารถเชื่อมต่อ AI ได้ (gemini-3.6-flash)"
+    ai_insight = "⚠️ ขัดข้อง ไม่สามารถเชื่อมต่อ AI ได้ (gemini-3.6-flash: Quota Exceeded / 429)"
     if GEMINI_API_KEY:
         try:
             client = genai.Client(api_key=GEMINI_API_KEY.strip())
@@ -291,7 +292,10 @@ Vol Surge: {', '.join(top_vol) if top_vol else 'ไม่มี'}
                         break
                 except Exception as e:
                     print(f"⚠️ API Error: {e}")
-                    time.sleep(2)
+                    if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
+                        print("🚨 ชนเพดาน Rate Limit (Free Tier: 20 ครั้ง/วัน) กรุณาผูก Billing ใน Google AI Studio")
+                        break
+                    time.sleep(3)
         except Exception as e:
             print(f"❌ Gemini Setup Error: {e}")
 
