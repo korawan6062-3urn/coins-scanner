@@ -1,9 +1,9 @@
-# scanner_1h.py
 import os
-import sys
+import time
 import requests
 import pandas as pd
 import warnings
+from datetime import datetime, timezone, timedelta
 from concurrent.futures import ThreadPoolExecutor
 from google import genai
 
@@ -11,66 +11,21 @@ warnings.filterwarnings("ignore")
 http = requests.Session()
 
 # ======================== 1. CONFIGURATION & TIER MAP ========================
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-# โครงสร้าง Tier สำหรับจัดกลุ่มวิเคราะห์ Sector Flow และ Money Rotation
+# โครงสร้าง Tier 33+1 (A.Aun Setup)
 TIER_STRUCTURE = {
-    # 🌟 Tier 1: King & Majors
-    "BTCUSDT": "King & Majors", 
-    "ETHUSDT": "King & Majors", 
-    "BNBUSDT": "King & Majors", 
-    "SOLUSDT": "King & Majors", 
-    "XRPUSDT": "King & Majors",
-    
-    # 🧠 Tier 2: AI & Hot Narrative
-    "ARKMUSDT": "AI & Hot Narrative", 
-    "FETUSDT": "AI & Hot Narrative", 
-    "NEARUSDT": "AI & Hot Narrative", 
-    "RENDERUSDT": "AI & Hot Narrative", 
-    "TAOUSDT": "AI & Hot Narrative", 
-    "WLDUSDT": "AI & Hot Narrative",
-    
-    # 💎 Tier 3: DeFi & RWA
-    "AAVEUSDT": "DeFi & RWA", 
-    "DYDXUSDT": "DeFi & RWA", 
-    "ENAUSDT": "DeFi & RWA", 
-    "JUPUSDT": "DeFi & RWA", 
-    "LINKUSDT": "DeFi & RWA", 
-    "ONDOUSDT": "DeFi & RWA", 
-    "PENDLEUSDT": "DeFi & RWA",
-    
-    # ⚡️ Tier 4: Fast L1s & High-Performance Ecosystems
-    "ADAUSDT": "Fast L1s", 
-    "APTUSDT": "Fast L1s", 
-    "ATOMUSDT": "Fast L1s", 
-    "AVAXUSDT": "Fast L1s", 
-    "DOTUSDT": "Fast L1s", 
-    "GRTUSDT": "Fast L1s", 
-    "ICPUSDT": "Fast L1s", 
-    "INJUSDT": "Fast L1s", 
-    "KASUSDT": "Fast L1s", 
-    "PYTHUSDT": "Fast L1s", 
-    "SEIUSDT": "Fast L1s", 
-    "SUIUSDT": "Fast L1s",
-    
-    # 🌐 Tier 5: Layer 2s & Modular
-    "ARBUSDT": "Layer 2s", 
-    "MANTAUSDT": "Layer 2s", 
-    "POLUSDT": "Layer 2s", 
-    "OPUSDT": "Layer 2s", 
-    "STRKUSDT": "Layer 2s", 
-    "TIAUSDT": "Layer 2s", 
-    "ZKUSDT": "Layer 2s",
-    
-    # 🏛️ Tier 6: Legacy & PoW
-    "BCHUSDT": "Legacy & PoW", 
-    "ETCUSDT": "Legacy & PoW", 
-    "LTCUSDT": "Legacy & PoW", 
-    "STXUSDT": "Legacy & PoW", 
-    "UNIUSDT": "Legacy & PoW", 
-    "ZECUSDT": "Legacy & PoW"
+    "BTCUSDT": "Macro Core", "XAUUSDT": "Macro Core",
+    "ETHUSDT": "Tier 1", "SOLUSDT": "Tier 1", "BNBUSDT": "Tier 1", "XRPUSDT": "Tier 1",
+    "BCHUSDT": "PoW", "ETCUSDT": "PoW", "KASUSDT": "PoW", "LTCUSDT": "PoW", "ZECUSDT": "PoW",
+    "APTUSDT": "Layer 1", "AVAXUSDT": "Layer 1", "INJUSDT": "Layer 1", "NEARUSDT": "Layer 1", "SUIUSDT": "Layer 1",
+    "ARBUSDT": "Layer 2", "OPUSDT": "Layer 2", "POLUSDT": "Layer 2",
+    "ONDOUSDT": "RWA",
+    "ARKMUSDT": "AI", "FETUSDT": "AI", "RENDERUSDT": "AI", "TAOUSDT": "AI", "WLDUSDT": "AI",
+    "AAVEUSDT": "DeFi", "DYDXUSDT": "DeFi", "ENAUSDT": "DeFi", "PENDLEUSDT": "DeFi", "UNIUSDT": "DeFi",
+    "GRTUSDT": "Infra", "JUPUSDT": "Infra", "LINKUSDT": "Infra", "PYTHUSDT": "Infra"
 }
 
 WATCHLIST = list(TIER_STRUCTURE.keys())
@@ -82,248 +37,247 @@ def format_price(val):
     elif abs(val) >= 1: return f"{val:.4f}"
     else: return f"{val:.6f}"
 
-# ======================== 2. DATA FETCHER (1H - MIN 200 CANDLES) ========================
-def get_binance_candles_1h(symbol, limit=300):
-    if symbol == "XAUUSDT": return None
-    endpoints = [
-        f"https://fapi.binance.com/fapi/v1/klines?symbol={symbol}&interval=1h&limit={limit}",
-        f"https://data-api.binance.vision/api/v3/klines?symbol={symbol}&interval=1h&limit={limit}",
-        f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval=1h&limit={limit}"
-    ]
-    for url in endpoints:
-        try:
-            res = http.get(url, timeout=5).json()
-            if isinstance(res, list) and len(res) >= 200:
-                df = pd.DataFrame(res, columns=["open_time", "open", "high", "low", "close", "volume", "close_time", "q_vol", "trades", "tb_base", "tb_quote", "ignore"])
-                for col in ["high", "low", "close"]: df[col] = pd.to_numeric(df[col], errors="coerce")
-                return df[["high", "low", "close"]].dropna().reset_index(drop=True)
-        except: continue
-    return None
-
-def get_gateio_candles_1h(symbol, limit=300):
-    base_sym = symbol[:-4] if symbol.endswith("USDT") else symbol
-    pair = f"{base_sym}_USDT"
-    endpoints = [
-        f"https://api.gateio.ws/api/v4/futures/usdt/candlesticks?contract={pair}&interval=1h&limit={limit}",
-        f"https://api.gateio.ws/api/v4/spot/candlesticks?currency_pair={pair}&interval=1h&limit={limit}"
-    ]
-    headers = {"User-Agent": "Mozilla/5.0"}
-    for url in endpoints:
-        try:
-            res = http.get(url, headers=headers, timeout=5).json()
-            if isinstance(res, list) and len(res) >= 200:
-                records = []
-                for item in res:
-                    if isinstance(item, dict):
-                        records.append({"timestamp": float(item.get("t", 0)), "high": float(item.get("h", 0)), "low": float(item.get("l", 0)), "close": float(item.get("c", 0))})
-                    elif isinstance(item, list) and len(item) >= 6:
-                        records.append({"timestamp": float(item[0]), "high": float(item[3]), "low": float(item[4]), "close": float(item[2])})
-                if records:
-                    df = pd.DataFrame(records).sort_values("timestamp").reset_index(drop=True)
-                    return df[["high", "low", "close"]].dropna().reset_index(drop=True)
-        except: continue
-    return None
-
-def get_kucoin_candles_1h(symbol):
-    base_sym = symbol[:-4] if symbol.endswith("USDT") else symbol
-    url = f"https://api.kucoin.com/api/v1/market/candles?type=1hour&symbol={base_sym}-USDT"
-    headers = {"User-Agent": "Mozilla/5.0"}
+# ======================== 2. DATA FETCHER (1H & 15M) ========================
+def get_binance_candles(symbol, timeframe="1h", limit=200):
+    if symbol in ["XAUUSDT", "XAUTUSDT"]: return None
+    url = f"https://fapi.binance.com/fapi/v1/klines?symbol={symbol}&interval={timeframe}&limit={limit}"
     try:
-        res = http.get(url, headers=headers, timeout=5).json()
-        if res.get("code") == "200000" and "data" in res and len(res["data"]) >= 200:
-            records = [{"close": float(i[2]), "high": float(i[3]), "low": float(i[4])} for i in res["data"]]
-            df = pd.DataFrame(records)
-            return df.iloc[::-1].reset_index(drop=True)
+        res = http.get(url, timeout=5).json()
+        if isinstance(res, list) and len(res) >= limit // 2:
+            df = pd.DataFrame(res, columns=["open_time", "open", "high", "low", "close", "volume", "close_time", "q_vol", "trades", "tb_base", "tb_quote", "ignore"])
+            for col in ["high", "low", "close"]: df[col] = pd.to_numeric(df[col], errors="coerce")
+            return df[["high", "low", "close"]].dropna().reset_index(drop=True)
     except: pass
     return None
 
-def fetch_candles(symbol):
-    df = get_binance_candles_1h(symbol)
-    if df is not None: return df
-    df = get_gateio_candles_1h(symbol)
-    if df is not None: return df
-    return get_kucoin_candles_1h(symbol)
+def get_gateio_candles(symbol, timeframe="1h", limit=200):
+    base_sym = symbol[:-4] if symbol.endswith("USDT") else symbol
+    pair = f"{base_sym}_USDT"
+    url = f"https://api.gateio.ws/api/v4/futures/usdt/candlesticks?contract={pair}&interval={timeframe}&limit={limit}"
+    try:
+        res = http.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=5).json()
+        if isinstance(res, list) and len(res) >= limit // 2:
+            records = [{"timestamp": float(i.get("t", 0)), "high": float(i.get("h", 0)), "low": float(i.get("l", 0)), "close": float(i.get("c", 0))} for i in res]
+            return pd.DataFrame(records).dropna().reset_index(drop=True)
+    except: pass
+    return None
 
-# ======================== 3. TYA.AUN SYSTEM ANALYSIS ========================
-def analyze_1h_tya_system(symbol):
-    df = fetch_candles(symbol)
-    if df is None or len(df) < 200: 
-        return symbol, "UNKNOWN", [], {}
+def get_kucoin_candles(symbol, timeframe="1h", limit=200):
+    base_sym = symbol[:-4] if symbol.endswith("USDT") else symbol
+    tf_map = {"1h": "1hour", "15m": "15min"}
+    url = f"https://api.kucoin.com/api/v1/market/candles?type={tf_map.get(timeframe, timeframe)}&symbol={base_sym}-USDT"
+    try:
+        res = http.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=5).json()
+        if res.get("code") == "200000" and "data" in res:
+            records = [{"close": float(i[2]), "high": float(i[3]), "low": float(i[4])} for i in res["data"]]
+            return pd.DataFrame(records)[::-1].reset_index(drop=True).dropna()
+    except: pass
+    return None
+
+def fetch_candles(symbol, timeframe="1h"):
+    df = get_binance_candles(symbol, timeframe)
+    if df is not None: return df
+    df = get_gateio_candles(symbol, timeframe)
+    if df is not None: return df
+    return get_kucoin_candles(symbol, timeframe)
+
+# ======================== 3. MULTI-TIMEFRAME ANALYSIS (1H + 15M) ========================
+def analyze_tya_system(symbol):
+    df_1h = fetch_candles(symbol, "1h")
+    df_15m = fetch_candles(symbol, "15m")
+    
+    if df_1h is None or df_15m is None or len(df_1h) < 100 or len(df_15m) < 100: 
+        return symbol, "CHOPPY", "AVOID", [], {}
 
     try:
-        df_c = df.iloc[:-1].copy().reset_index(drop=True)
+        # --- 1H Macro Trend ---
+        ema21_1h = df_1h["close"].ewm(span=21, adjust=False).mean().iloc[-1]
+        ema35_1h = df_1h["close"].ewm(span=35, adjust=False).mean().iloc[-1]
+        ema89_1h = df_1h["close"].ewm(span=89, adjust=False).mean().iloc[-1]
+        ema200_1h = df_1h["close"].ewm(span=200, adjust=False).mean().iloc[-1]
         
-        # EMA Ribbon (21, 35, 89, 200)
-        ema21 = df_c["close"].ewm(span=21, adjust=False).mean()
-        ema35 = df_c["close"].ewm(span=35, adjust=False).mean()
-        ema89 = df_c["close"].ewm(span=89, adjust=False).mean()
-        ema200 = df_c["close"].ewm(span=200, adjust=False).mean()
+        macro_regime = "CHOPPY"
+        if (ema89_1h > ema200_1h) and (ema21_1h > ema35_1h): macro_regime = "BUY"
+        elif (ema89_1h < ema200_1h) and (ema21_1h < ema35_1h): macro_regime = "SELL"
 
-        # MACD (Standard 12, 26, 9)
-        exp1 = df_c["close"].ewm(span=12, adjust=False).mean()
-        exp2 = df_c["close"].ewm(span=26, adjust=False).mean()
+        # --- 15M Radar (Setup & Entry) ---
+        c_val = df_15m["close"].iloc[-1]
+        ema89_15m = df_15m["close"].ewm(span=89, adjust=False).mean()
+        ema200_15m = df_15m["close"].ewm(span=200, adjust=False).mean()
+        e89_15m_v, e200_15m_v = ema89_15m.iloc[-1], ema200_15m.iloc[-1]
+
+        # EMA 89 Distance Guard
+        dist_pct = (abs(c_val - e89_15m_v) / e89_15m_v) * 100
+
+        # MACD (12,26)
+        exp1 = df_15m["close"].ewm(span=12, adjust=False).mean()
+        exp2 = df_15m["close"].ewm(span=26, adjust=False).mean()
         macd = exp1 - exp2
-        signal = macd.rolling(window=9).mean()
-        hist = macd - signal
-
-        # Value Extraction
-        c_val = df_c["close"].iloc[-1]
-        e21_v, e35_v, e89_v, e200_v = ema21.iloc[-1], ema35.iloc[-1], ema89.iloc[-1], ema200.iloc[-1]
-        m_c, s_c = macd.iloc[-1], signal.iloc[-1]
-
-        if pd.isna(e200_v): return symbol, "UNKNOWN", [], {}
         
-        # 1H Macro Filter Rule (Strict TYA.AUN)
-        regime = "CHOPPY"
-        if (e89_v > e200_v) and (e21_v > e35_v): regime = "BUY"
-        elif (e89_v < e200_v) and (e21_v < e35_v): regime = "SELL"
+        # MACD Balance 3.0 Lookback 48
+        macd_peak = macd.rolling(window=48).max().iloc[-1]
+        macd_trough = macd.rolling(window=48).min().iloc[-1]
+        m_val = macd.iloc[-1]
+        
+        is_zero_buy = (m_val > 0) and (m_val <= (macd_peak * 0.20))
+        is_zero_sell = (m_val < 0) and (m_val >= (macd_trough * 0.20))
+        is_reversal_up = (c_val > e200_15m_v) and (df_15m["close"].iloc[-2] <= ema200_15m.iloc[-2])
 
+        # --- Tagging & Action Buckets ---
+        bucket = "AVOID"
         tags = []
-        if regime == "BUY":
-            if (e21_v > e35_v > e89_v > e200_v): tags.append("EMA_STACK")
-            if (m_c > 0): tags.append("ZERO_STATION_SETUP")
-            if (c_val > e89_v and e89_v > e200_v): tags.append("SLINGSHOT_PRIMED")
-        elif regime == "SELL":
-            if (e21_v < e35_v < e89_v < e200_v): tags.append("EMA_STACK")
-            if (m_c < 0): tags.append("ZERO_STATION_SETUP")
-            if (c_val < e89_v and e89_v < e200_v): tags.append("SLINGSHOT_PRIMED")
 
-        pct_change = ((c_val - df_c["close"].iloc[-2]) / df_c["close"].iloc[-2]) * 100
-        price_data = {"price": c_val, "pct": pct_change, "ema89": e89_v}
+        if dist_pct > 0.50:
+            bucket = "AVOID"
+            tags.append(f"ปลายน้ำ (ห่าง {dist_pct:.2f}%)")
+        elif macro_regime == "BUY":
+            if is_zero_buy:
+                bucket = "BUY"
+                tags.append("ZERO-STATION")
+            elif is_reversal_up:
+                bucket = "BUY"
+                tags.append("REVERSAL WATCH (เบรก 200)")
+            else:
+                bucket = "AVOID"
+                tags.append("รอพักตัว")
+        elif macro_regime == "SELL":
+            if is_zero_sell:
+                bucket = "SELL"
+                tags.append("ZERO-STATION")
+            else:
+                bucket = "AVOID"
+                tags.append("รอเด้ง")
+        else:
+            tags.append("ไซด์เวย์")
 
-        return symbol, regime, tags, price_data
+        pct_change = ((c_val - df_15m["close"].iloc[-96]) / df_15m["close"].iloc[-96]) * 100 # 24H change approx
+        price_data = {"price": c_val, "pct": pct_change, "ema89": e89_15m_v, "dist": dist_pct}
+
+        return symbol, macro_regime, bucket, tags, price_data
 
     except Exception:
-        return symbol, "UNKNOWN", [], {}
+        return symbol, "CHOPPY", "AVOID", [], {}
+
+# ======================== 3.5 DYNAMIC SESSION PROTOCOL ========================
+def get_session_context():
+    """แบ่ง โซนเวลา และ แผนคุมความเสี่ยงที่ชัดเจนตามพฤติกรรมแต่ละตลาด"""
+    tz = timezone(timedelta(hours=7))
+    hour = datetime.now(tz).hour
+    
+    if 7 <= hour < 14:
+        session_name = "ตลาดเอเชีย (Asian Session / ผันผวนต่ำถึงปานกลาง)"
+        risk_rule = "*คำสั่งพิเศษ (Asian Session):* ตลาดมักซึม หรือวิ่งในกรอบแคบ ให้ระวัง False Breakout เน้นเข้าเทรดเฉพาะไม้ที่ย่อลึกแตะ Zero-Station ชัดเจนเท่านั้น ถ้าระยะไม่สวยให้ทับมือ"
+    elif 14 <= hour < 19:
+        session_name = "ตลาดลอนดอน (London Session / ฟอร์มเทรนด์)"
+        risk_rule = "*คำสั่งพิเศษ (London Session):* วอลุ่มเริ่มเข้า อาจมีการทำ Fakeout เพื่อสะบัดกวาด Low/High ของตลาดเอเชียก่อน ให้เน้นเทรดไปในทิศทางเดียวกับ 1H Macro Trend เป็นหลัก สามารถรันเทรนด์ได้"
+    elif 19 <= hour < 23:
+        session_name = "ตลาดสหรัฐฯ & ข่าวเศรษฐกิจ (NY Open / ผันผวนสูงมาก)"
+        risk_rule = "*คำสั่งพิเศษ (NY/US Session):* ระวังข่าวเศรษฐกิจ! ให้ลด Margin ลง 50% (ใช้โควต้าไฟ YELLOW), งดสเกลป์สั้น 5M, รอแท่ง 15M ยืนยันหลังกวาดสภาพคล่อง, และเน้นปิด TP1 (1.5R) แล้วดัน SL บังทุนทันที"
+    else:
+        session_name = "นอกเวลาทำการหลัก (After Hours / วอลุ่มบาง ไซด์เวย์ซึม)"
+        risk_rule = "*คำสั่งพิเศษ (After Hours):* สภาพคล่องต่ำ กราฟมักไซด์เวย์ออกข้างหรือซึมลง แนะนำให้ชะลอการเปิดออเดอร์ใหม่ หากมีไม้อยู่ให้ตั้ง SL บังหน้าทุนเพื่อล็อคความเสี่ยง"
+        
+    return session_name, risk_rule
 
 # ======================== 4. TELEGRAM SENDER ========================
 def send_telegram(message):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID: return
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown", "disable_web_page_preview": True}
-    try:
-        res = http.post(url, json=payload, timeout=10)
-        if res.status_code != 200:
-            plain = message.replace("*", "").replace("`", "").replace("_", "")
-            http.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": plain}, timeout=10)
+    try: http.post(url, json=payload, timeout=10)
     except: pass
 
 # ======================== 5. MAIN LOGIC & AI PROMPT ========================
 def main():
-    print("🚀 เริ่มสแกน 1H (TYA.AUN Macro Filter)...")
+    print("🚀 เริ่มสแกน Multi-Timeframe (1H Macro + 15M Setup)...")
     
-    buy_list, sell_list, choppy_list = [], [], []
-    priority_targets = []
+    macro_buy, macro_sell, macro_chop = [], [], []
+    action_buy, action_sell, action_avoid = [], [], []
     
     with ThreadPoolExecutor(max_workers=10) as executor:
-        for sym, regime, tags, data in executor.map(analyze_1h_tya_system, WATCHLIST):
-            if regime == "BUY": buy_list.append(sym)
-            elif regime == "SELL": sell_list.append(sym)
-            elif regime == "CHOPPY": choppy_list.append(sym)
+        for sym, regime, bucket, tags, data in executor.map(analyze_tya_system, WATCHLIST):
+            if regime == "BUY": macro_buy.append(sym)
+            elif regime == "SELL": macro_sell.append(sym)
+            else: macro_chop.append(sym)
             
-            if len(tags) > 0:
-                priority_targets.append({
-                    "symbol": sym, "regime": regime, "tags": tags,
-                    "price": data.get("price", 0), "pct": data.get("pct", 0), "ema89": data.get("ema89", 0)
-                })
+            tier = TIER_STRUCTURE.get(sym, "Other")
+            item_str = f"{sym} [{tier}] (ราคา: {format_price(data.get('price',0))}, ห่าง EMA89: {data.get('dist',0):.2f}%, Tags: {', '.join(tags)})"
+            
+            if bucket == "BUY": action_buy.append(item_str)
+            elif bucket == "SELL": action_sell.append(item_str)
+            else:
+                if "ปลายน้ำ" in str(tags): action_avoid.append(item_str)
 
-    buy_list.sort(); sell_list.sort(); choppy_list.sort()
+    session_str, risk_protocol = get_session_context()
 
-    raw_data_str = "รายการเหรียญที่เกิด Signal ใน 1H (Priority Data):\n"
-    for p in priority_targets:
-        tier_name = TIER_STRUCTURE.get(p['symbol'], "Other")
-        raw_data_str += f"- {p['symbol']} [{tier_name}]: Regime={p['regime']}, Tags={p['tags']}, Price={p['price']}, Change={p['pct']:.2f}%, EMA89={p['ema89']}\n"
-    
-    raw_data_str += f"\nภาพรวมตลาด:\nBUY Trend: {len(buy_list)} เหรียญ\nSELL Trend: {len(sell_list)} เหรียญ\nCHOPPY: {len(choppy_list)} เหรียญ"
+    raw_data_str = (
+        f"ข้อมูลตลาดปัจจุบัน (จำนวนเหรียญ 34 สินทรัพย์):\n"
+        f"- 1H โครงสร้างขาขึ้น (BUY): {len(macro_buy)}\n"
+        f"- 1H โครงสร้างขาลง (SELL): {len(macro_sell)}\n"
+        f"- 1H ไซด์เวย์ (CHOPPY): {len(macro_chop)}\n\n"
+        f"[เป้าหมายเข้าเทรด 15M BUY (ดักย่อ / ต้นเทรนด์)]\n" + "\n".join(action_buy[:5]) + "\n\n"
+        f"[เป้าหมายเข้าเทรด 15M SELL (ดักเด้ง)]\n" + "\n".join(action_sell[:5]) + "\n\n"
+        f"[โซนอันตราย เลี่ยงเทรด/ปลายน้ำ]\n" + "\n".join(action_avoid[:5])
+    )
 
     system_prompt = f"""
-คุณคือ 'TYA.AUN System Analyst' หน้าที่ของคุณคือการแปลผลข้อมูลดิบจาก Python ให้เป็นแผนการเทรดที่เข้าใจง่าย
+คุณคือ 'หัวหน้าคุมความเสี่ยงประจำห้องเทรด (TYA.AUN 15M Radar)'
+แปลผลข้อมูลด้านล่างเป็น "ภาษาไทยวงการเทรด (สั้น กระชับ ตรงจุด)"
 
-กฎเหล็ก (ห้ามฝ่าฝืน):
-1. ระบบ 1H TYA.AUN ของเราใช้เพียง EMA (21,35,89,200) เป็นเบรกเกอร์หลัก (89>200 และ 21>35 คือ BUY) ห้ามอ้างอิง Ichimoku, RSI หรือ Stochastic เด็ดขาด
-2. เลือกเหรียญจาก 'Priority Data' ที่น่าสนใจที่สุดมาแค่ 2-3 เหรียญ เพื่อจัดเป็น High Priority Targets โดยอ้างอิง Tier หมวดหมู่ประกอบ
-3. เขียน Action Plan ให้สอดคล้อง (เช่น ถ้า 1H เป็น BUY ให้บอกว่ารอจุดเข้า 5M Zero-Station / Slingshot เพื่อ Long)
-4. คง Layout และ Emoji ตามรูปแบบตัวอย่างด้านล่าง ห้ามใส่ข้อความเกริ่นนำหรือลงท้ายใดๆ
+[บริบทเวลาและความเสี่ยง]
+เวลาปัจจุบัน: {session_str}
+{risk_protocol}
 
-รูปแบบที่ต้องการ:
-🧭 *[1H TYA.AUN MACRO FLOW & TARGETS]*
-────────────────────────────
-🤖 *AI Tactical Briefing (TYA.AUN 1H):*
-(สรุปสภาวะตลาดจากสัดส่วน BUY/SELL และการไหลของ Sector ภายใน 2 บรรทัด)
-
-🎯 *[HIGH PRIORITY 1H TARGETS]*
-🟢 *COIN_NAME* `[TAG_1 + TAG_2]`
-  • *ราคา:* `ราคา` (เปอร์เซ็นต์%) | *EMA 89 (1H):* `ราคาEMA89`
-  • *โครงสร้าง 1H:* (อธิบายตาม Tags ที่เห็น เช่น EMA 89 > 200 และ 21 > 35 ชัดเจน)
-  • *Action Plan:* (เช่น รอคลื่น 5M เข้าสู่ Zero-Station เพื่อเคาะ BUY)
-
-🔴 *COIN_NAME* ... (ทำรูปแบบเดียวกัน หากเป็น SELL)
-
-────────────────────────────
-📊 *[1H TYA.AUN STRUCTURE OVERVIEW]*
-🟢 *BUY TREND (89>200 & 21>35):* {', '.join(buy_list[:10])}... ({len(buy_list)})
-🔴 *SELL TREND (89<200 & 21<35):* {', '.join(sell_list[:10])}... ({len(sell_list)})
-⚪️ *NO TREND / CHOPPY:* {len(choppy_list)} เหรียญ
-────────────────────────────
-📌 *Checklist:* 1H Macro Filter ➔ 5M Zero-Station / Slingshot Entry
-
-ข้อมูลดิบ:
+[ข้อมูลสแกนเนอร์ 1H และ 15M]
 {raw_data_str}
+
+[รูปแบบการตอบ (ห้ามเปลี่ยน Layout และห้ามพูดเกริ่นนำ)]
+🧭 *[15M TYA.AUN RADAR & 1H MACRO FLOW]*
+────────────────────────────
+⏰ *ช่วงเวลา:* {session_str}
+🌐 *โครงสร้าง 1H:* 🟢 ขาขึ้น {len(macro_buy)} | 🔴 ขาลง {len(macro_sell)} | ⚪️ ไซด์เวย์ {len(macro_chop)} (34 สินทรัพย์)
+
+⚠️ *กฎคุมความเสี่ยง & แผนปฏิบัติการ:*
+(สรุปคำแนะนำการเทรดให้สอดคล้องกับ "คำสั่งพิเศษตาม Session" ด้านบน ผสมกับ Market Breadth ที่เห็น ด้วยภาษาเทรดเดอร์ที่เฉียบขาด เช่น ดักย่อ, ทับมือ, ระวังกวาด SL, หากมี BTC ดูดสภาพคล่องให้แจ้งเตือนด้วย)
+
+🎯 *[โฟกัสพิเศษ: 15M เข้าโซนยิง / เฝ้ากลับตัว]*
+(เลือกเหรียญจากเป้าหมาย BUY/SELL ด้านบนมา 2-3 เหรียญ อธิบายโครงสร้าง 1H/15M และระบุ Action Plan ที่เจาะจง เช่น 'รอสัญญาณสายฟ้า 15M เข้า BUY')
+🟢 *COIN_NAME* `[1H: ขาขึ้น + 15M: ZERO-STATION]`
+  • *ราคา:* `ราคา` | *สถานะ:* (เช่น 1H คุมเทรนด์ขาขึ้น / 15M พักตัวลึกแตะโซนสมดุล)
+  • *Action:* (เช่น รอสัญญาณสายฟ้าบน 15M แล้วเข้า BUY)
+
+⛔️ *[โซนเลี่ยงเทรด / เสี่ยงติดดอย & สับขาหลอก]*
+(เลือกจากโซนอันตรายมาเตือน 2-3 เหรียญ เช่น ห้ามไล่ราคาเพราะปลายน้ำ)
+
+────────────────────────────
+📌 *Checklist:* 1H กรองเทรนด์ ➔ 15M ดักย่อ Zero-Station ➔ 5M คอนเฟิร์มจุดตัด SL แคบ
 """
 
-    ai_success = False
-    final_message = ""
-
+    ai_insight = "⚠️ ขัดข้อง ไม่สามารถเชื่อมต่อ AI ได้"
     if GEMINI_API_KEY:
         try:
-            print("Sending data to Gemini AI...")
             client = genai.Client(api_key=GEMINI_API_KEY.strip())
-            response = client.models.generate_content(
-                model='gemini-3.6-flash',
-                contents=system_prompt,
-            )
-            final_message = response.text.strip()
-            ai_success = True
+            # ลูป Retry แบบ Exponential Backoff สำหรับ 3.6-flash
+            for attempt in range(1, 5):
+                try:
+                    print(f"Sending to Gemini API (gemini-3.6-flash) [Attempt {attempt}/4]...")
+                    response = client.models.generate_content(
+                        model='gemini-3.6-flash',
+                        contents=system_prompt,
+                    )
+                    if response and response.text:
+                        ai_insight = response.text.strip()
+                        print("Gemini API call successful.")
+                        break
+                except Exception as err:
+                    print(f"Gemini API Attempt {attempt} Error: {err}")
+                    if attempt < 4:
+                        time.sleep(attempt * 3)
         except Exception as e:
-            print(f"Gemini API Error: {e}")
+            print(f"Gemini Client Init Error: {e}")
 
-    # Fallback (Python Rendering)
-    if not ai_success:
-        print("⚠️ [FALLBACK] AI Error, using Python rendering...")
-        
-        best_targets = ""
-        count = 0
-        for p in priority_targets:
-            if count >= 3: break
-            icon = "🟢" if p['regime'] == "BUY" else "🔴"
-            action = "รอจุดเข้า 5M Zero-Station / Slingshot เพื่อเคาะ BUY (Long)" if p['regime'] == "BUY" else "รอจุดเข้า 5M Zero-Station / Slingshot เพื่อเคาะ SELL (Short)"
-            tag_str = " + ".join(p['tags']).replace("_", " ")
-            
-            best_targets += f"{icon} *{p['symbol']}* `[{tag_str}]`\n"
-            best_targets += f"  • *ราคา:* `{format_price(p['price'])}` ({p['pct']:+.2f}%) | *EMA 89:* `{format_price(p['ema89'])}`\n"
-            best_targets += f"  • *Action Plan:* {action}\n\n"
-            count += 1
-            
-        if not best_targets: best_targets = "  • ยังไม่มีเหรียญเข้าเกณฑ์ 1H TYA.AUN Structure ที่ชัดเจน\n"
-
-        final_message = (
-            f"🧭 *[1H TYA.AUN MACRO FLOW & TARGETS]*\n"
-            f"────────────────────────────\n"
-            f"⚠️ *[API ERROR: ระบบวิเคราะห์โดย Python เท่านั้น (ไม่ผ่าน AI)]*\n"
-            f"_ตลาดประมวลผลผ่านสมการคณิตศาสตร์ Pure 1H TYA.AUN 100%_\n\n"
-            f"🎯 *[HIGH PRIORITY 1H TARGETS: โครงสร้างชัดตามระบบ]*\n"
-            f"{best_targets.strip()}\n"
-            f"────────────────────────────\n"
-            f"📊 *[1H TYA.AUN STRUCTURE OVERVIEW (Top 10)]*\n"
-            f"🟢 *BUY TREND (89>200 & 21>35):*\n  `{', '.join(buy_list[:10])}`\n"
-            f"🔴 *SELL TREND (89<200 & 21<35):*\n  `{', '.join(sell_list[:10])}`\n"
-            f"⚪️ *NO TREND / CHOPPY:* {len(choppy_list)} เหรียญ\n"
-            f"────────────────────────────\n"
-            f"📌 *Checklist:* 1H Macro Filter ➔ 5M Zero-Station / Slingshot Entry"
-        )
-
-    send_telegram(final_message)
-    print("✅ สแกน 1H และส่งรายงานเรียบร้อย")
+    send_telegram(ai_insight)
+    print("✅ สแกน Multi-TF และส่งรายงานเรียบร้อย")
 
 if __name__ == "__main__":
     main()
