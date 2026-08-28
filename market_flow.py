@@ -164,7 +164,7 @@ def analyze_1h_structure(symbol):
     except Exception:
         return symbol, 0.0, 1.0, "CHOPPY", "NONE", "", {}
 
-# ======================== 4. SESSION PROTOCOL ========================
+# ======================== 4. SESSION PROTOCOL & TELEGRAM ========================
 def get_session_context():
     tz = timezone(timedelta(hours=7))
     hour = datetime.now(tz).hour
@@ -177,8 +177,15 @@ def get_session_context():
 def send_telegram(message):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID: return
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    try: http.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "HTML", "disable_web_page_preview": True}, timeout=8)
-    except: pass
+    try: 
+        res = http.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "HTML", "disable_web_page_preview": True}, timeout=8)
+        # 🛡️ Fallback: หาก AI แทรก HTML ผิดรูป (Error 400) ให้ส่งเป็นข้อความธรรมดาแทน ป้องกันการเงียบหาย
+        if res.status_code != 200:
+            print(f"⚠️ Telegram HTML Format Error: {res.text} -> กำลังส่งแบบ Plain Text แทน")
+            clean_msg = message.replace('<b>', '').replace('</b>', '').replace('<code>', '').replace('</code>', '').replace('<i>', '').replace('</i>', '')
+            http.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": clean_msg, "disable_web_page_preview": True}, timeout=8)
+    except Exception as e:
+        print(f"❌ Telegram Post Error: {e}")
 
 # ======================== 5. MAIN EXECUTION ========================
 def main():
@@ -253,18 +260,33 @@ Vol Surge: {', '.join(top_vol) if top_vol else 'ไม่มี'}
 • [สรุปว่าชั่วโมงนี้ควรทำอะไร โฟกัสไปที่ทิศทางไหน หรือควรงดเทรด]
 """
 
-    ai_insight = "⚠️ ขัดข้อง ไม่สามารถเชื่อมต่อ AI ได้"
+    ai_insight = "⚠️ ขัดข้อง ไม่สามารถเชื่อมต่อ AI ได้ โปรดตรวจสอบ API หรือ โควต้าใช้งาน"
     if GEMINI_API_KEY:
         try:
             client = genai.Client(api_key=GEMINI_API_KEY.strip())
-            for attempt in range(1, 4):
-                try:
-                    res = client.models.generate_content(model='gemini-3.6-flash', contents=system_prompt)
-                    if res and res.text:
-                        ai_insight = res.text.strip()
-                        break
-                except: time.sleep(2)
-        except: pass
+            
+            # 🛡️ Auto-Model Fallback: ลำดับโมเดล ลองใช้ 3.6 ก่อนตามที่คุณสั่ง 
+            # ถ้า API คืนค่า 404 (ไม่พบโมเดล) จะสลับไปใช้ 1.5-flash ให้อัตโนมัติ งานจะได้ไม่สะดุด
+            models_to_try = ['gemini-3.6-flash', 'gemini-1.5-flash', 'gemini-2.0-flash']
+            
+            for model_name in models_to_try:
+                success = False
+                for attempt in range(1, 3):
+                    try:
+                        print(f"⏳ ส่งข้อมูลให้ AI ประมวลผลด้วยโมเดล: {model_name} [ครั้งที่ {attempt}/2]...")
+                        res = client.models.generate_content(model=model_name, contents=system_prompt)
+                        if res and res.text:
+                            ai_insight = res.text.strip()
+                            success = True
+                            print(f"✅ AI ประมวลผลสำเร็จ ({model_name})")
+                            break
+                    except Exception as e:
+                        print(f"⚠️ API Error ({model_name}): {e}")
+                        time.sleep(2)
+                if success:
+                    break # หลุดออกจากลูปเปลี่ยนโมเดลเมื่อยิงสำเร็จแล้ว
+        except Exception as e: 
+            print(f"❌ Gemini Setup Error: {e}")
 
     buy_str = "\n".join(action_buy[:3]) if action_buy else "  • (ไม่มีเหรียญเข้าเกณฑ์)"
     sell_str = "\n".join(action_sell[:3]) if action_sell else "  • (ไม่มีเหรียญเข้าเกณฑ์)"
