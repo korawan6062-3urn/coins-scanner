@@ -102,10 +102,10 @@ def get_market_session():
     now = datetime.now(tz)
     hour = now.hour
     
-    if 7 <= hour < 14: return "Asian Session (Low/Mid Volatility)"
-    elif 14 <= hour < 19: return "London Session (Trend Building)"
-    elif 19 <= hour < 23: return "NY Open / Economic News (High Volatility Window)"
-    else: return "After Hours (Low Liquidity / Chop)"
+    if 7 <= hour < 14: return "ตลาดเอเชีย (Asian Session / ผันผวนต่ำถึงปานกลาง)"
+    elif 14 <= hour < 19: return "ตลาดลอนดอน (London Session / ฟอร์มเทรนด์)"
+    elif 19 <= hour < 23: return "ตลาดสหรัฐฯ & ข่าวเศรษฐกิจ (NY Open / ผันผวนสูงมาก)"
+    else: return "นอกเวลาทำการหลัก (After Hours / วอลุ่มบาง ไซด์เวย์)"
 
 # ==========================================
 # 4. TELEGRAM NOTIFICATION
@@ -161,33 +161,40 @@ def main():
     
     session_info = get_market_session()
     
-    gain_str = ", ".join([f"{s.replace('USDT','')} (+{p:.2f}%)" for s, p, v in top_gainers]) if top_gainers else "None"
-    lose_str = ", ".join([f"{s.replace('USDT','')} ({p:.2f}%)" for s, p, v in top_losers]) if top_losers else "None"
-    surge_str = ", ".join([f"{s.replace('USDT','')} (x{v:.1f})" for s, p, v in top_vol_surges]) if top_vol_surges else "Normal Market Vol"
+    gain_str = ", ".join([f"{s.replace('USDT','')} (+{p:.2f}%)" for s, p, v in top_gainers]) if top_gainers else "ไม่มี"
+    lose_str = ", ".join([f"{s.replace('USDT','')} ({p:.2f}%)" for s, p, v in top_losers]) if top_losers else "ไม่มี"
+    surge_str = ", ".join([f"{s.replace('USDT','')} (x{v:.1f})" for s, p, v in top_vol_surges]) if top_vol_surges else "วอลุ่มตลาดปกติ"
 
-    # --- THE STRICT AI PROMPT ---
+    # --- PROMPT ภาษาไทยสำหรับนักเทรด ---
     system_prompt = f"""
-คุณคือ "Head of Risk Management" ประจำห้องเทรด (ระบบ A.Aun Setup)
-หน้าที่ของคุณคือประเมินสภาพแวดล้อมตลาด (Market Regime) จากข้อมูลเชิงประจักษ์ด้านล่าง และออกคำสั่งปฏิบัติการ (Tactical Directive) ให้บอทเทรด
+คุณคือ "หัวหน้าคุมความเสี่ยงประจำห้องเทรด" (ระบบ A.Aun Setup)
+หน้าที่ของคุณคือประเมินสภาพแวดล้อมตลาดจากข้อมูลตัวเลขด้านล่าง แล้วออกคำสั่งปฏิบัติการให้เทรดเดอร์ด้วย "ภาษาไทยของนักเทรดที่เข้าใจง่าย ชัดเจน ตรงไปตรงมา"
 
-[DATA CONTEXT]
-- Session: {session_info}
-- Market Breadth: 🟢 {green_count} / 🔴 {red_count}
-- BTC: {btc_perf:+.2f}% | Gold (XAU): {gold_perf:+.2f}%
-- Sector Performance:
-  Tier 1: {sector_perf['Tier 1 Majors']:+.2f}%, L1: {sector_perf['Layer 1']:+.2f}%, L2: {sector_perf['Layer 2']:+.2f}%
+[ข้อมูลตลาดล่าสุด]
+- ช่วงเวลาตลาด: {session_info}
+- ทิศทางตลาด (เขียว/แดง): 🟢 {green_count} เหรียญ / 🔴 {red_count} เหรียญ (ฝั่งลงครองตลาด {red_pct_str}%)
+- พี่ใหญ่ BTC: {btc_perf:+.2f}% | ทองคำ (XAU): {gold_perf:+.2f}%
+- ภาพรวมรายกลุ่ม:
+  Tier 1 Majors: {sector_perf['Tier 1 Majors']:+.2f}%, Layer 1: {sector_perf['Layer 1']:+.2f}%, Layer 2: {sector_perf['Layer 2']:+.2f}%
   DeFi: {sector_perf['DeFi']:+.2f}%, AI: {sector_perf['AI & DePIN']:+.2f}%, PoW: {sector_perf['PoW']:+.2f}%
-- Top Gainers: {gain_str}
-- Top Losers: {lose_str}
-- Volume Surge (>2x): {surge_str}
+- เหรียญบวกแรง: {gain_str}
+- เหรียญร่วงหนัก: {lose_str}
+- วอลุ่มพุ่งผิดปกติ (>2 เท่า): {surge_str}
 
-[RULES & FORMAT]
-ห้ามเกริ่นนำ ห้ามพูดซ้ำตัวเลขเปอร์เซ็นต์แบบนกแก้วนกขุนทอง ให้ประเมินสถานการณ์แล้วตอบตามฟอร์แมตนี้เป๊ะๆ:
+[กฎเหล็กในการตอบ]
+1. ห้ามเกริ่นนำ ห้ามทวนตัวเลขเปอร์เซ็นต์ซ้ำซ้อน
+2. ใช้ภาษาไทยวงการเทรดที่อ่านแล้วเข้าใจทันที หลีกเลี่ยงภาษาอังกฤษปนไทยที่ไม่จำเป็น (เช่น ให้ใช้ "นั่งทับมือ", "ห้ามรับมีด", "ห้ามเปิด BUY", "ระวังกวาด Stop Loss", "เทรนด์จริงเริ่มวิ่ง", "ตลาดไม่มีแรงหนุน")
+3. ตอบตามโครงสร้างนี้เป๊ะๆ:
 
-🛑 STANCE: [เลือก 1 ข้อ: STAND DOWN (ทับมือ) / BTC DOMINANCE (ดึงสภาพคล่องเข้าพี่ใหญ่) / BROAD EXPANSION (เทรนด์มาเต็ม) / RISK-OFF FLUSH (ดิ่งยกแผงทิ้งคริปโต)]
-• สภาวะกระแสเงิน: [อธิบายว่าเงินไหลเข้าหรือออก อ้างอิงจาก Breadth และ Top Gainer/Loser]
-• การประเมินความเสี่ยง: [อธิบายความน่าเชื่อถือของการวิ่ง โดยอ้างอิงจาก Volume Surge และ Session ปัจจุบัน หากไม่มีวอลุ่มซัพพอร์ตให้ระบุว่าเป็น Fakeout]
-• คำแนะนำหน้างาน: [ระบุคำสั่งที่เกี่ยวข้องกับแผนเทรด เช่น ห้ามไล่ราคา Long, ให้รัน Plan A ดักย่อ, หรือระวังการกวาด Stop Loss]
+🛑 สถานะ: [เลือก 1 ข้อที่ตรงที่สุด:
+- นั่งทับมือ ชะลอเปิดไม้ (ตลาดนิ่ง ไม่มีแรงหนุน)
+- ระวังโดนดูดสภาพคล่อง (เงินเข้า BTC ตัวเดียว Altcoins พักก่อน)
+- เทรนด์จริงเริ่มวิ่ง ลุยตามแผน (เงินไหลเข้าทั้งกระดาน มีวอลุ่มหนุน)
+- เทขายยกแผง ห้ามรับมีด (ตลาดดิ่งหนัก เงินหนีเข้าทอง)]
+
+• สภาวะกระแสเงิน: [อธิบายการหมุนเงินว่าไหลเข้าหรือออก อิงจากจำนวนเหรียญเขียว/แดง และตัวนำตลาด]
+• ประเมินความเสี่ยง: [อธิบายความน่าเชื่อถือของการวิ่ง เช็คว่ามีวอลุ่มหนุนจริงหรือแค่สะบัดหลอก/กวาด Stop Loss ช่วงข่าว]
+• คำแนะนำหน้างาน: [ระบุคำสั่งชัดเจน เช่น นั่งทับมือฝั่ง BUY, โฟกัสตามน้ำฝั่ง SHORT, หรือรอแท่งเทียนนิ่งก่อนเข้า]
 """
 
     ai_insight = "ไม่สามารถเชื่อมต่อ AI ได้ในขณะนี้"
@@ -213,8 +220,8 @@ def main():
     msg = (
         f"🧭 <b>[MARKET FLOW & AI REGIME 1H]</b>\n"
         f"────────────────────────\n"
-        f"⏰ <b>Session:</b> {session_info}\n"
-        f"🌐 <b>Market Breadth:</b> 🟢 {green_count} / 🔴 {red_count} (ตลาดถูกกดดัน {red_pct_str}%)\n\n"
+        f"⏰ <b>ช่วงเวลา:</b> {session_info}\n"
+        f"🌐 <b>ภาพรวมตลาด:</b> 🟢 {green_count} / 🔴 {red_count} (ฝั่งลงครองตลาด {red_pct_str}%)\n\n"
         f"📊 <b>Macro & Sector Performance (1H):</b>\n"
         f"👑 BTC: <code>{btc_perf:+.2f}%</code> | 🥇 Gold: <code>{gold_perf:+.2f}%</code>\n"
         f"💎 Tier 1: <code>{sector_perf['Tier 1 Majors']:+.2f}%</code> | 🧠 AI: <code>{sector_perf['AI & DePIN']:+.2f}%</code>\n"
@@ -222,9 +229,9 @@ def main():
         f"🏦 DeFi: <code>{sector_perf['DeFi']:+.2f}%</code>   | ⛏️ PoW: <code>{sector_perf['PoW']:+.2f}%</code>\n"
         f"🏛️ RWA: <code>{sector_perf['RWA']:+.2f}%</code>    | 🔗 Infra: <code>{sector_perf['Infra & Oracles']:+.2f}%</code>\n\n"
         f"⚡️ <b>Outliers & Volume Spike (1H):</b>\n"
-        f"🚀 <b>Top Gainer:</b> <code>{gain_str}</code>\n"
-        f"🩸 <b>Top Loser:</b> <code>{lose_str}</code>\n"
-        f"⚠️ <b>Volume Surge:</b> <code>{surge_str}</code>\n"
+        f"🚀 <b>บวกแรง:</b> <code>{gain_str}</code>\n"
+        f"🩸 <b>ลบหนัก:</b> <code>{lose_str}</code>\n"
+        f"⚠️ <b>วอลุ่มพุ่ง:</b> <code>{surge_str}</code>\n"
         f"────────────────────────\n"
         f"🤖 <b>AI Tactical Directive:</b>\n"
         f"{ai_insight}"
