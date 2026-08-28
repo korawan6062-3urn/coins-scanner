@@ -6,6 +6,7 @@ import warnings
 from datetime import datetime, timezone, timedelta
 from concurrent.futures import ThreadPoolExecutor
 from google import genai
+from google.genai import types
 
 warnings.filterwarnings("ignore")
 http = requests.Session()
@@ -114,11 +115,15 @@ def send_telegram_msg(message, parse_mode="HTML"):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID: return
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": parse_mode, "disable_web_page_preview": True}
-    try: http.post(url, json=payload, timeout=8)
+    try:
+        res = http.post(url, json=payload, timeout=8)
+        if res.status_code != 200:
+            plain = message.replace("<b>", "").replace("</b>", "").replace("<code>", "").replace("</code>", "")
+            http.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": plain}, timeout=8)
     except: pass
 
 # ==========================================
-# 5. MAIN EXECUTION & STRICT GEMINI 3.6
+# 5. MAIN EXECUTION & GEMINI 3.6 RESILIENT ENGINE
 # ==========================================
 def main():
     print("Fetching Market Performance Data...")
@@ -199,22 +204,27 @@ def main():
 
     ai_insight = "ไม่สามารถเชื่อมต่อ AI ได้ในขณะนี้"
     if GEMINI_API_KEY:
-        client = genai.Client(api_key=GEMINI_API_KEY.strip())
-        for attempt in range(1, 4):
-            try:
-                print(f"Sending to Gemini API (gemini-3.6-flash) [Attempt {attempt}/3]...")
-                response = client.models.generate_content(
-                    model='gemini-3.6-flash',
-                    contents=system_prompt,
-                )
-                if response and response.text:
-                    ai_insight = response.text.strip()
-                    print("Gemini API call successful.")
-                    break
-            except Exception as e:
-                print(f"Gemini API Error (Attempt {attempt}): {e}")
-                if attempt < 3:
-                    time.sleep(3)
+        try:
+            client = genai.Client(api_key=GEMINI_API_KEY.strip())
+            # ลูป Retry แบบ Exponential Backoff รองรับ Spikes 503 ของ Google Server
+            for attempt in range(1, 6):
+                try:
+                    print(f"Sending to Gemini API (gemini-3.6-flash) [Attempt {attempt}/5]...")
+                    response = client.models.generate_content(
+                        model='gemini-3.6-flash',
+                        contents=system_prompt,
+                    )
+                    if response and response.text:
+                        ai_insight = response.text.strip()
+                        print("Gemini API call successful.")
+                        break
+                except Exception as err:
+                    print(f"Gemini API Attempt {attempt} Error: {err}")
+                    if attempt < 5:
+                        sleep_sec = attempt * 4  # รอ 4s, 8s, 12s, 16s
+                        time.sleep(sleep_sec)
+        except Exception as e:
+            print(f"Gemini Client Init Error: {e}")
 
     # --- สร้างข้อความสรุปส่งเข้า Telegram ---
     msg = (
