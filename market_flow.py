@@ -1,4 +1,5 @@
 import os
+import time
 import requests
 import pandas as pd
 import warnings
@@ -9,7 +10,7 @@ from google import genai
 warnings.filterwarnings("ignore")
 http = requests.Session()
 
-# --- ดึง Token จาก Environment Variables ---
+# --- ดึง Token จาก GitHub Secrets / Environment Variables ---
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
@@ -97,7 +98,6 @@ def get_1h_performance(symbol):
     return symbol, pct_change, vol_surge
 
 def get_market_session():
-    # ใช้ Built-in module แทน pytz (UTC+7 สำหรับ Asia/Bangkok)
     tz = timezone(timedelta(hours=7))
     now = datetime.now(tz)
     hour = now.hour
@@ -118,7 +118,7 @@ def send_telegram_msg(message, parse_mode="HTML"):
     except: pass
 
 # ==========================================
-# 5. MAIN EXECUTION & AI PROMPTING
+# 5. MAIN EXECUTION & STRICT GEMINI 3.6
 # ==========================================
 def main():
     print("Fetching Market Performance Data...")
@@ -132,7 +132,7 @@ def main():
     # คำนวณ Sector & Breadth
     sector_perf = {}
     green_count, red_count = 0, 0
-    crypto_data = [] # สำหรับหา Top Gainer/Loser (ไม่รวมทองคำ)
+    crypto_data = []
     
     for sector, coins in SECTORS.items():
         valid_coins = [results[c]["pct"] for c in coins if c in results]
@@ -154,14 +154,13 @@ def main():
     top_losers = crypto_data[-2:]
     
     crypto_data.sort(key=lambda x: x[2], reverse=True)
-    top_vol_surges = [x for x in crypto_data if x[2] >= 2.0][:2] # วอลุ่มพุ่ง > 2 เท่า
+    top_vol_surges = [x for x in crypto_data if x[2] >= 2.0][:2]
     
     btc_perf = results.get("BTCUSDT", {}).get("pct", 0.0)
     gold_perf = results.get("XAUUSDT", {}).get("pct", 0.0)
     
     session_info = get_market_session()
     
-    # จัดรูปสตริง Outliers
     gain_str = ", ".join([f"{s.replace('USDT','')} (+{p:.2f}%)" for s, p, v in top_gainers]) if top_gainers else "None"
     lose_str = ", ".join([f"{s.replace('USDT','')} ({p:.2f}%)" for s, p, v in top_losers]) if top_losers else "None"
     surge_str = ", ".join([f"{s.replace('USDT','')} (x{v:.1f})" for s, p, v in top_vol_surges]) if top_vol_surges else "Normal Market Vol"
@@ -191,8 +190,7 @@ def main():
 • คำแนะนำหน้างาน: [ระบุคำสั่งที่เกี่ยวข้องกับแผนเทรด เช่น ห้ามไล่ราคา Long, ให้รัน Plan A ดักย่อ, หรือระวังการกวาด Stop Loss]
 """
 
-    # === คืนค่าบล็อกการยิง API แบบดั้งเดิมของคุณ 100% ===
-  ai_insight = "ไม่สามารถเชื่อมต่อ AI ได้ในขณะนี้"
+    ai_insight = "ไม่สามารถเชื่อมต่อ AI ได้ในขณะนี้"
     if GEMINI_API_KEY:
         client = genai.Client(api_key=GEMINI_API_KEY.strip())
         for attempt in range(1, 4):
@@ -210,7 +208,6 @@ def main():
                 print(f"Gemini API Error (Attempt {attempt}): {e}")
                 if attempt < 3:
                     time.sleep(3)
-    # ====================================================
 
     # --- สร้างข้อความสรุปส่งเข้า Telegram ---
     msg = (
