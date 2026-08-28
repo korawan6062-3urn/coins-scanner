@@ -136,12 +136,10 @@ def analyze_1h_structure(symbol):
         
         # ตรวจสอบ Divergence ง่ายๆ (Reversal)
         if bucket == "NONE":
-            # ราคาทำ Low ใหม่ แต่ MACD Hist ยกสูงขึ้น (Bullish Div)
             if l_closed < df["low"].iloc[-10:-2].min() and macd_hist.iloc[-2] > macd_hist.iloc[-10:-2].min():
                 if regime == "SELL" or ema89 < ema200:
                     bucket = "REVERSAL"
                     fact_str = "เกิด Bullish Divergence บน 1H กราฟทิ้งไส้ทำ False Break ล่าสุด"
-            # ราคาทำ High ใหม่ แต่ MACD Hist ต่ำลง (Bearish Div)
             elif h_closed > df["high"].iloc[-10:-2].max() and macd_hist.iloc[-2] < macd_hist.iloc[-10:-2].max():
                 if regime == "BUY" or ema89 > ema200:
                     bucket = "REVERSAL"
@@ -200,16 +198,21 @@ def main():
                 elif bucket == "REVERSAL": action_rev.append(item_str)
                 elif bucket == "AVOID": action_avoid.append(item_str)
 
-    # คำนวณ Macro Flow 1H
-    for sector, coins in TIER_STRUCTURE.items():
-        valid_pct = [results[c]["pct"] for c in coins if c in results]
+    # จัดกลุ่มเหรียญเพื่อคำนวณ Sector 
+    sector_groups = {}
+    for coin, sector in TIER_STRUCTURE.items():
+        sector_groups.setdefault(sector, []).append(coin)
+
+    for sector, coins in sector_groups.items():
+        valid_pct = [results[c]["pct"] for c in coins if c in results and c != "XAUUSDT"]
         sector_pct[sector] = (sum(valid_pct) / len(valid_pct)) if valid_pct else 0.0
-        
-        for c in coins:
-            if c != "XAUUSDT" and c in results:
-                crypto_data.append((c, results[c]["pct"], results[c]["vol"]))
-                if results[c]["pct"] > 0: green_count += 1
-                elif results[c]["pct"] < 0: red_count += 1
+
+    # จัดข้อมูล Market Breadth & Outliers
+    for c, sector in TIER_STRUCTURE.items():
+        if c != "XAUUSDT" and c in results:
+            crypto_data.append((c, results[c]["pct"], results[c]["vol"]))
+            if results[c]["pct"] > 0: green_count += 1
+            elif results[c]["pct"] < 0: red_count += 1
 
     crypto_data.sort(key=lambda x: x[1], reverse=True)
     top_gainers = [f"{s.replace('USDT','')} ({p:+.2f}%)" for s, p, v in crypto_data[:2]]
@@ -264,13 +267,13 @@ Vol Surge: {', '.join(top_vol) if top_vol else 'ไม่มี'}
                 except: time.sleep(2)
         except: pass
 
-    # จัดระเบียบสตริงเป้าหมาย (จำกัดหมวดละ 3 ตัวเพื่อไม่ให้จอยาวเกินไป)
+    # จัดระเบียบสตริงเป้าหมาย (จำกัดหมวดละ 3 ตัว)
     buy_str = "\n".join(action_buy[:3]) if action_buy else "  • (ไม่มีเหรียญเข้าเกณฑ์)"
     sell_str = "\n".join(action_sell[:3]) if action_sell else "  • (ไม่มีเหรียญเข้าเกณฑ์)"
     rev_str = "\n".join(action_rev[:3]) if action_rev else "  • (ไม่มีเหรียญเข้าเกณฑ์)"
     avoid_str = "\n".join(action_avoid[:3]) if action_avoid else "  • (ไม่มีเหรียญที่อันตรายชัดเจน)"
 
-    # --- สร้างข้อความสรุปส่ง Telegram ---
+    # --- สร้างข้อความสรุปส่ง Telegram (Safeguarded Formatting) ---
     msg = (
         f"🧭 <b>[1H MARKET FLOW & MACRO RADAR]</b>\n"
         f"────────────────────────────\n"
@@ -278,8 +281,8 @@ Vol Surge: {', '.join(top_vol) if top_vol else 'ไม่มี'}
         f"🌐 <b>ภาพรวม 1H:</b> 🟢 ขาขึ้น {green_count} | 🔴 ขาลง {red_count}\n\n"
         f"📊 <b>Macro Performance (1H):</b>\n"
         f"👑 BTC: <code>{btc_perf:+.2f}%</code> | 🥇 Gold: <code>{gold_perf:+.2f}%</code>\n"
-        f"💎 Tier1: <code>{sector_pct['Tier 1 Majors' if 'Tier 1 Majors' in sector_pct else 'Tier 1']:+.2f}%</code> | 🧠 AI: <code>{sector_pct['AI & DePIN' if 'AI & DePIN' in sector_pct else 'AI']:+.2f}%</code>\n"
-        f"🏗 L1: <code>{sector_pct['Layer 1']:+.2f}%</code> | 🏦 DeFi: <code>{sector_pct['DeFi']:+.2f}%</code>\n\n"
+        f"💎 Tier1: <code>{sector_pct.get('Tier 1', 0.0):+.2f}%</code> | 🧠 AI: <code>{sector_pct.get('AI', 0.0):+.2f}%</code>\n"
+        f"🏗 L1: <code>{sector_pct.get('Layer 1', 0.0):+.2f}%</code> | 🏦 DeFi: <code>{sector_pct.get('DeFi', 0.0):+.2f}%</code>\n\n"
         f"⚡️ <b>Outliers & Volume Spike:</b>\n"
         f"🚀 <b>บวกแรง:</b> <code>{', '.join(top_gainers) if top_gainers else '-'}</code>\n"
         f"🩸 <b>ลบหนัก:</b> <code>{', '.join(top_losers) if top_losers else '-'}</code>\n"
