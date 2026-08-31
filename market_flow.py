@@ -119,20 +119,20 @@ def analyze_1h_structure(symbol):
         h_closed = df["high"].iloc[-2]
         l_closed = df["low"].iloc[-2]
         
-        # คำนวณ 1H Change
+        # 1H Change
         prev_close = df["close"].iloc[-3]
         pct_change_1h = ((c_closed - prev_close) / prev_close) * 100
         
-        # คำนวณ 24H Change (ย้อนหลัง 24 แท่งเทียน)
+        # 24H Change (ย้อนหลัง 24 แท่ง 1H)
         close_24h_ago = df["close"].iloc[-26] if len(df) >= 26 else df["close"].iloc[0]
         pct_change_24h = ((c_closed - close_24h_ago) / close_24h_ago) * 100
         
-        # คำนวณ Volume Surge
+        # Volume Surge
         vol_current = df["volume"].iloc[-2]
         vol_avg = df["volume"].iloc[-26:-2].mean()
         vol_surge = (vol_current / vol_avg) if vol_avg > 0 else 1.0
 
-        # EMA & MACD Indicators
+        # Indicators
         ema21_series = df["close"].ewm(span=21, adjust=False).mean()
         ema35_series = df["close"].ewm(span=35, adjust=False).mean()
         ema89_series = df["close"].ewm(span=89, adjust=False).mean()
@@ -147,23 +147,15 @@ def analyze_1h_structure(symbol):
         macd_hist = macd_line - macd_sig
         macd_current = macd_line.iloc[-2]
 
-        # ระยะความตึงและ Anti-Saw
         dist_89_pct = (abs(c_closed - ema89) / ema89) * 100
         dist_21_35_pct = (abs(ema21 - ema35) / ema35) * 100
         
         cross_up = (ema21_prev <= ema35_prev) and (ema21 > ema35)
         cross_dn = (ema21_prev >= ema35_prev) and (ema21 < ema35)
         
-        # โครงสร้างแท่งเทียน
-        body = abs(o_closed - c_closed)
-        lower_wick = min(o_closed, c_closed) - l_closed
-        upper_wick = h_closed - max(o_closed, c_closed)
-        is_bull_pinbar = (lower_wick > (1.5 * body)) and (lower_wick > upper_wick)
-        is_bear_pinbar = (upper_wick > (1.5 * body)) and (upper_wick > lower_wick)
-
         bucket, fact_str = "NONE", ""
 
-        # กฎข้อ 1: กรอง Overextended และ Choppy Market (Avoid List)
+        # 1. กรอง Overextended และ Choppy Market (Avoid List)
         if dist_89_pct > 3.0:
             bucket = "AVOID"
             fact_str = f"ราคาลอยห่าง EMA89 ถึง {dist_89_pct:.2f}% (Overextended) ห้ามไล่ราคา"
@@ -171,7 +163,7 @@ def analyze_1h_structure(symbol):
             bucket = "AVOID"
             fact_str = "เส้น EMA21/35 บีบตัวแคบ (Choppy Squeeze) เสี่ยงสับขาหลอก"
         
-        # กฎข้อ 2: คัดกรองตามระบบเทรด (หากผ่านตัวกรอง Choppy)
+        # 2. คัดกรองตามระบบเทรด (หากผ่านตัวกรอง Choppy)
         if bucket == "NONE":
             # 🟢 [BULLISH REGIME]
             if ema21 > ema35 and ema35 > ema89:
@@ -191,7 +183,7 @@ def analyze_1h_structure(symbol):
                     bucket = "PLAN_B_SELL"
                     fact_str = "EMA 21 จ่อตัด 35 ลง (Momentum Cross) ใต้ฐาน EMA89"
         
-        # กฎข้อ 3: ตรวจจับ Divergence (Reversal Watch)
+        # 3. ตรวจจับ Divergence (Reversal Watch)
         if bucket == "NONE":
             if l_closed < df["low"].iloc[-10:-2].min() and macd_hist.iloc[-2] > macd_hist.iloc[-10:-2].min():
                 bucket, fact_str = "REVERSAL", "Bullish Divergence 1H กราฟทำ Low ใหม่แต่ MACD ยกฐาน"
@@ -221,8 +213,7 @@ def main():
     
     results = {}
     crypto_data = []
-    
-    plan_a_str_list, plan_b_str_list, rev_str_list, avoid_str_list = [], [], [], []
+    plan_a_list, plan_b_list, rev_list, avoid_list = [], [], [], []
 
     with ThreadPoolExecutor(max_workers=10) as executor:
         for sym, pct_1h, pct_24h, vol, bucket, fact_str, data in executor.map(analyze_1h_structure, WATCHLIST):
@@ -232,22 +223,17 @@ def main():
                 tier = TIER_MAP.get(sym, 'Other')
                 price = format_price(data.get('price', 0))
                 
-                # ฟอร์แมต Bullet ย่อย
-                if "BUY" in bucket or bucket == "REVERSAL": 
-                    icon = "🟢"
-                elif "SELL" in bucket or bucket == "AVOID":
-                    icon = "🔴"
-                else:
-                    icon = "•"
+                if "BUY" in bucket or bucket == "REVERSAL": icon = "🟢"
+                elif "SELL" in bucket or bucket == "AVOID": icon = "🔴"
+                else: icon = "•"
 
                 item_str = f"{icon} <b>{sym}</b> <code>[{tier}]</code> | <code>{price}</code> ➔ {fact_str}"
                 
-                if bucket in ["PLAN_A_BUY", "PLAN_A_SELL"]: plan_a_str_list.append(item_str)
-                elif bucket in ["PLAN_B_BUY", "PLAN_B_SELL"]: plan_b_str_list.append(item_str)
-                elif bucket == "REVERSAL": rev_str_list.append(item_str)
-                elif bucket == "AVOID": avoid_str_list.append(item_str)
+                if bucket in ["PLAN_A_BUY", "PLAN_A_SELL"]: plan_a_list.append(item_str)
+                elif bucket in ["PLAN_B_BUY", "PLAN_B_SELL"]: plan_b_list.append(item_str)
+                elif bucket == "REVERSAL": rev_list.append(item_str)
+                elif bucket == "AVOID": avoid_list.append(item_str)
 
-    # ดึงค่าจัดอันดับ Volume / Gainers / Losers
     for c in WATCHLIST:
         if c != "XAUUSDT" and c in results:
             crypto_data.append((c, results[c]["pct_1h"], results[c]["vol"]))
@@ -263,21 +249,20 @@ def main():
 
     # --- GEMINI 3.6 FLASH STRICT INSTRUCTION ---
     system_prompt = f"""
-คุณคือนักวิเคราะห์ข่าวเศรษฐกิจและการลงทุนสาย Quant (Broadcaster) หน้าที่ของคุณคือเล่าสถานการณ์ตลาด 1H ที่เพิ่งจบไป และชี้เป้าแผนการเทรดข้างหน้าแบบตรงไปตรงมา ห้ามใช้คำเกริ่นนำหรือลงท้าย ห้ามเขียนทฤษฎียืดเยื้อ ใช้รูปแบบ Bullet Points ตามฟอร์แมตเป๊ะๆ
+คุณคือนักวิเคราะห์ข่าวเศรษฐกิจและการลงทุนสาย Quant หน้าที่ของคุณคือชี้เป้าแผนการเทรดแบบสั้น กระชับ ตรงประเด็น ห้ามเขียนบรรยายยาว ห้ามมีบทเกริ่นนำหรือคำลงท้าย ให้ใช้ฟอร์แมต Bullet Points ตามโครงสร้างนี้เป๊ะๆ:
 
-[ข้อมูลสรุป 1H Data]
+[ข้อมูลสรุป 1H]
 Macro 24H: BTC {btc_perf_24h:+.2f}% | Gold {gold_perf_24h:+.2f}%
-Top Gainers (1H): {', '.join(top_gainers)} | Top Losers (1H): {', '.join(top_losers)}
+Gainers (1H): {', '.join(top_gainers)} | Losers (1H): {', '.join(top_losers)}
 Volume Spike (1H): {', '.join(top_vol) if top_vol else 'ไม่มี'}
-แผนหน้างาน: เตรียมเข้า Plan A ({len(plan_a_str_list)} ตัว), รอทะลุ Plan B ({len(plan_b_str_list)} ตัว)
+แผนพร้อมเข้า: Plan A ({len(plan_a_list)} ตัว), จ่อตัด Plan B ({len(plan_b_list)} ตัว), Avoid ({len(avoid_list)} ตัว)
 
 [รูปแบบการตอบ (ห้ามเปลี่ยน Layout)]
-🛑 <b>พาดหัวหลัก:</b> [สรุปภาพรวม 1 ประโยค เช่น ตลาดเอเชียเปิดแรง เม็ดเงินไหลออกจากทองคำเข้าเสี่ยงใน Crypto เต็มตัว]
-
-• <b>สรุปเหตุการณ์ 1H ที่ผ่านมา:</b> [อธิบายเม็ดเงินไหลเข้า/ออก ระหว่าง BTC และกลุ่ม Altcoins (Gainers/Losers) เทียบกับ Gold]
-• <b>สัญญาณ Volume ผิดปกติ:</b> [รายงานเหรียญใน Volume Spike พร้อมประเมินสั้นๆ ว่าโดนเทขายหรือโดนดันราคา]
-• <b>จุดรอเก็บเต็มคำ & แผนข้างหน้า:</b> [ชี้เป้าเหรียญในกลุ่ม Plan A ว่าตัวไหนน่าโฟกัสเข้าเทรด หรือถ้า Plan B เยอะให้บอกว่ารอจุดตัดจบรอบ]
-• <b>ข้อควรระวังเร่งด่วน:</b> [เตือนให้เลี่ยงเหรียญ Avoid หรือระวังความเสี่ยงจากความผันผวนของ BTC]
+⚡️ <b>PLAN A [ดักย่อ/เด้ง ชิดฐาน EMA89]:</b> [ชี้เป้าเหรียญที่พร้อมเข้าทันทีและ Action ที่ต้องทำ]
+🚀 <b>PLAN B [จับตาโมเมนตัมจ่อตัด]:</b> [ชี้เป้าเหรียญที่กำลังจ่อตัดและจุดคอนเฟิร์ม]
+🔄 <b>REVERSAL [ดักสวนจุดกลับตัว]:</b> [ชี้เป้าตัวที่มี Divergence]
+⚡️ <b>VOLUME SPIKE FOCUS:</b> [สรุปเหรียญที่ Volume พุ่งผิดปกติ ว่าควรตามหรือห้ามไล่ราคา]
+⛔️ <b>AVOID LIST [สั่งห้ามแตะเด็ดขาด]:</b> [ระบุกลุ่มที่ Choppy หรือตึงจัด เสี่ยงโดนเทขาย]
 """
 
     ai_insight = "⚠️ ขัดข้อง ไม่สามารถเชื่อมต่อ AI ได้"
@@ -299,11 +284,10 @@ Volume Spike (1H): {', '.join(top_vol) if top_vol else 'ไม่มี'}
                     time.sleep(3)
         except Exception: pass
 
-    # จัดหน้า UI
-    str_plan_a = "\n".join(plan_a_str_list) if plan_a_str_list else "• (ยังไม่มีเหรียญเข้าเกณฑ์)"
-    str_plan_b = "\n".join(plan_b_str_list) if plan_b_str_list else "• (ยังไม่มีเหรียญเข้าเกณฑ์)"
-    str_rev = "\n".join(rev_str_list) if rev_str_list else "• (ยังไม่มีสัญญาณกลับตัว)"
-    str_avoid = "\n".join(avoid_str_list) if avoid_str_list else "• (ยังไม่มีเหรียญที่เสี่ยงชัดเจน)"
+    str_plan_a = "\n".join(plan_a_list) if plan_a_list else "• (ยังไม่มีเหรียญเข้าเกณฑ์)"
+    str_plan_b = "\n".join(plan_b_list) if plan_b_list else "• (ยังไม่มีเหรียญเข้าเกณฑ์)"
+    str_rev = "\n".join(rev_list) if rev_list else "• (ยังไม่มีสัญญาณกลับตัว)"
+    str_avoid = "\n".join(avoid_list) if avoid_list else "• (ยังไม่มีเหรียญที่เสี่ยงชัดเจน)"
 
     msg = (
         f"🧭 <b>[MARKET FLOW & MACRO RADAR]</b>\n"
@@ -321,7 +305,7 @@ Volume Spike (1H): {', '.join(top_vol) if top_vol else 'ไม่มี'}
         f"🔄 <b>REVERSAL / DIVERGENCE:</b>\n{str_rev}\n\n"
         f"⛔️ <b>AVOID LIST (ตึงจัด / ฟันปลา):</b>\n{str_avoid}\n"
         f"────────────────────────────\n"
-        f"🎙️ <b>AI TACTICAL DIRECTIVE (Economic Briefing):</b>\n"
+        f"🎯 <b>AI TACTICAL DIRECTIVE:</b>\n"
         f"{ai_insight}"
     )
     
