@@ -106,12 +106,12 @@ def fetch_candles(symbol, timeframe="1h", limit=250):
     return get_kucoin_candles(symbol, timeframe, limit)
 
 # ==========================================
-# 📊 1H STRUCTURAL ANALYSIS (FACT-BASED)
+# 📊 1H STRUCTURAL ANALYSIS (FACT-BASED A.AUN LOGIC)
 # ==========================================
 def analyze_1h_structure(symbol):
     df = fetch_candles(symbol, "1h", 250)
     if df is None or len(df) < 200: 
-        return symbol, 0.0, 1.0, "CHOPPY", "NONE", "", {}
+        return symbol, 0.0, 0.0, 1.0, "NONE", "", {}
 
     try:
         c_closed = df["close"].iloc[-2]
@@ -119,13 +119,20 @@ def analyze_1h_structure(symbol):
         h_closed = df["high"].iloc[-2]
         l_closed = df["low"].iloc[-2]
         
+        # คำนวณ 1H Change
         prev_close = df["close"].iloc[-3]
-        pct_change = ((c_closed - prev_close) / prev_close) * 100
+        pct_change_1h = ((c_closed - prev_close) / prev_close) * 100
         
+        # คำนวณ 24H Change (ย้อนหลัง 24 แท่งเทียน)
+        close_24h_ago = df["close"].iloc[-26] if len(df) >= 26 else df["close"].iloc[0]
+        pct_change_24h = ((c_closed - close_24h_ago) / close_24h_ago) * 100
+        
+        # คำนวณ Volume Surge
         vol_current = df["volume"].iloc[-2]
         vol_avg = df["volume"].iloc[-26:-2].mean()
         vol_surge = (vol_current / vol_avg) if vol_avg > 0 else 1.0
 
+        # EMA & MACD Indicators
         ema21_series = df["close"].ewm(span=21, adjust=False).mean()
         ema35_series = df["close"].ewm(span=35, adjust=False).mean()
         ema89_series = df["close"].ewm(span=89, adjust=False).mean()
@@ -138,63 +145,62 @@ def analyze_1h_structure(symbol):
         macd_line = df["close"].ewm(span=12, adjust=False).mean() - df["close"].ewm(span=26, adjust=False).mean()
         macd_sig = macd_line.ewm(span=9, adjust=False).mean()
         macd_hist = macd_line - macd_sig
-        
-        regime = "CHOPPY"
-        if (ema89 > ema200) and (ema21 > ema35): regime = "BUY"
-        elif (ema89 < ema200) and (ema21 < ema35): regime = "SELL"
+        macd_current = macd_line.iloc[-2]
 
+        # ระยะความตึงและ Anti-Saw
         dist_89_pct = (abs(c_closed - ema89) / ema89) * 100
+        dist_21_35_pct = (abs(ema21 - ema35) / ema35) * 100
+        
+        cross_up = (ema21_prev <= ema35_prev) and (ema21 > ema35)
+        cross_dn = (ema21_prev >= ema35_prev) and (ema21 < ema35)
+        
+        # โครงสร้างแท่งเทียน
         body = abs(o_closed - c_closed)
         lower_wick = min(o_closed, c_closed) - l_closed
         upper_wick = h_closed - max(o_closed, c_closed)
-        
         is_bull_pinbar = (lower_wick > (1.5 * body)) and (lower_wick > upper_wick)
         is_bear_pinbar = (upper_wick > (1.5 * body)) and (upper_wick > lower_wick)
-        
-        touch_ema89 = (l_closed <= ema89 <= h_closed) or (dist_89_pct < 0.3)
-        cross_up = (ema21_prev <= ema35_prev) and (ema21 > ema35)
-        cross_dn = (ema21_prev >= ema35_prev) and (ema21 < ema35)
 
         bucket, fact_str = "NONE", ""
 
+        # กฎข้อ 1: กรอง Overextended และ Choppy Market (Avoid List)
         if dist_89_pct > 3.0:
             bucket = "AVOID"
-            fact_str = f"ราคาตึงจัด ห่าง EMA89 ถึง {dist_89_pct:.2f}% เสี่ยงโดนเทขายทำกำไร"
-        elif regime == "BUY":
-            if is_bull_pinbar and touch_ema89:
-                bucket, fact_str = "BUY", "ย่อทดสอบ EMA89 ไม่หลุด + ทิ้งไส้ล่างกวาด SL (Bullish Rejection)"
-            elif cross_up:
-                bucket, fact_str = "BUY", "EMA 21 ตัด 35 ขึ้น (Golden Setup) ยืนยันเทรนด์วิ่งต่อ"
-            elif touch_ema89 and c_closed > ema89:
-                bucket, fact_str = "BUY", "ราคาย่อแตะ EMA89 แล้วยืนทรงตัวได้ รอสัญญาณทะยาน"
-        elif regime == "SELL":
-            if is_bear_pinbar and touch_ema89:
-                bucket, fact_str = "SELL", "เด้งทดสอบ EMA89 ไม่ผ่าน + ทิ้งไส้บนยาว (Bearish Rejection)"
-            elif cross_dn:
-                bucket, fact_str = "SELL", "EMA 21 ตัด 35 ลง ยืนยันเทรนด์ขาลงกดดันต่อ"
+            fact_str = f"ราคาลอยห่าง EMA89 ถึง {dist_89_pct:.2f}% (Overextended) ห้ามไล่ราคา"
+        elif dist_21_35_pct <= 0.05 and not (cross_up or cross_dn):
+            bucket = "AVOID"
+            fact_str = "เส้น EMA21/35 บีบตัวแคบ (Choppy Squeeze) เสี่ยงสับขาหลอก"
         
+        # กฎข้อ 2: คัดกรองตามระบบเทรด (หากผ่านตัวกรอง Choppy)
+        if bucket == "NONE":
+            # 🟢 [BULLISH REGIME]
+            if ema21 > ema35 and ema35 > ema89:
+                if dist_89_pct <= 0.50 and macd_current > 0:
+                    bucket = "PLAN_A_BUY"
+                    fact_str = "ย่อลงฐาน EMA89 ไม่หลุด + โมเมนตัมคลายตัว (พร้อมเข้า)"
+                elif cross_up or dist_21_35_pct <= 0.10:
+                    bucket = "PLAN_B_BUY"
+                    fact_str = "EMA 21 จ่อตัด 35 ขึ้น (Momentum Cross) เหนือฐาน EMA89"
+            
+            # 🔴 [BEARISH REGIME]
+            elif ema21 < ema35 and ema35 < ema89:
+                if dist_89_pct <= 0.50 and macd_current < 0:
+                    bucket = "PLAN_A_SELL"
+                    fact_str = "เด้งชน EMA89 ใต้แนวต้าน ทิ้งไส้บน (พร้อมเข้า)"
+                elif cross_dn or dist_21_35_pct <= 0.10:
+                    bucket = "PLAN_B_SELL"
+                    fact_str = "EMA 21 จ่อตัด 35 ลง (Momentum Cross) ใต้ฐาน EMA89"
+        
+        # กฎข้อ 3: ตรวจจับ Divergence (Reversal Watch)
         if bucket == "NONE":
             if l_closed < df["low"].iloc[-10:-2].min() and macd_hist.iloc[-2] > macd_hist.iloc[-10:-2].min():
-                if regime == "SELL" or ema89 < ema200:
-                    bucket, fact_str = "REVERSAL", "เกิด Bullish Divergence 1H กราฟทำ False Break ล่าสุด"
+                bucket, fact_str = "REVERSAL", "Bullish Divergence 1H กราฟทำ Low ใหม่แต่ MACD ยกฐาน"
             elif h_closed > df["high"].iloc[-10:-2].max() and macd_hist.iloc[-2] < macd_hist.iloc[-10:-2].max():
-                if regime == "BUY" or ema89 > ema200:
-                    bucket, fact_str = "REVERSAL", "เกิด Bearish Divergence โมเมนตัม 1H เริ่มแผ่ว"
+                bucket, fact_str = "REVERSAL", "Bearish Divergence 1H กราฟทำ High ใหม่แต่ MACD กดต่ำ"
 
-        if bucket == "NONE" and (ema21 > ema89 and ema35 < ema89):
-            bucket, fact_str = "AVOID", "ตลาดฟันปลา (EMA พันกันไร้ทรง) เสี่ยงโดนสับขาหลอก"
-
-        return symbol, pct_change, vol_surge, regime, bucket, fact_str, {"price": c_closed}
+        return symbol, pct_change_1h, pct_change_24h, vol_surge, bucket, fact_str, {"price": c_closed}
     except Exception:
-        return symbol, 0.0, 1.0, "CHOPPY", "NONE", "", {}
-
-def get_session_context():
-    tz = timezone(timedelta(hours=7))
-    hour = datetime.now(tz).hour
-    if 7 <= hour < 14: return "ตลาดเอเชีย (Asia / วอลุ่มซึม)", "ระวัง False Breakout ทับมือรอตลาดยุโรป หรือเข้าเฉพาะตัวที่ Rejection ชัดๆ"
-    elif 14 <= hour < 19: return "ตลาดลอนดอน (London / ฟอร์มเทรนด์)", "วอลุ่มเข้า รันเทรนด์ตามโครงสร้าง 1H ได้ ให้โฟกัสเหรียญที่มี Volume Surge"
-    elif 19 <= hour < 23: return "ตลาดสหรัฐฯ & ข่าวเศรษฐกิจ (NY Open / ผันผวนสูงมาก)", "⚠️ ลด Margin 50% (ไฟ YELLOW) รอ 1H ปิดแท่งยืนยันแนวรับ ไม่เปิดสวนกลางแท่ง TP1 แล้วดัน SL บังทุนทันที"
-    else: return "ดึก (After Hours / วอลุ่มบาง)", "ชะลอเปิดออเดอร์ใหม่ ขยับ SL บังทุนไม้เก่า ล็อคกำไรเข้านอน"
+        return symbol, 0.0, 0.0, 1.0, "NONE", "", {}
 
 def send_telegram_msg(message, parse_mode="HTML"):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID: return
@@ -213,38 +219,38 @@ def send_telegram_msg(message, parse_mode="HTML"):
 def main():
     print("🚀 สแกนข้อมูล 1H Structural Radar (33+1 Assets)...")
     
-    results, sector_pct = {}, {}
-    green_count, red_count = 0, 0
+    results = {}
     crypto_data = []
     
-    action_buy, action_sell, action_rev, action_avoid = [], [], [], []
+    plan_a_str_list, plan_b_str_list, rev_str_list, avoid_str_list = [], [], [], []
 
     with ThreadPoolExecutor(max_workers=10) as executor:
-        for sym, pct, vol, regime, bucket, fact_str, data in executor.map(analyze_1h_structure, WATCHLIST):
-            results[sym] = {"pct": pct, "vol": vol}
+        for sym, pct_1h, pct_24h, vol, bucket, fact_str, data in executor.map(analyze_1h_structure, WATCHLIST):
+            results[sym] = {"pct_1h": pct_1h, "pct_24h": pct_24h, "vol": vol}
             
             if bucket != "NONE":
                 tier = TIER_MAP.get(sym, 'Other')
                 price = format_price(data.get('price', 0))
-                item_str = f"  • <b>{sym}</b> <code>[{tier}]</code> | ราคา: <code>{price}</code>\n    └ <i>Fact:</i> {fact_str}"
                 
-                if bucket == "BUY": action_buy.append(item_str)
-                elif bucket == "SELL": action_sell.append(item_str)
-                elif bucket == "REVERSAL": action_rev.append(item_str)
-                elif bucket == "AVOID": action_avoid.append(item_str)
+                # ฟอร์แมต Bullet ย่อย
+                if "BUY" in bucket or bucket == "REVERSAL": 
+                    icon = "🟢"
+                elif "SELL" in bucket or bucket == "AVOID":
+                    icon = "🔴"
+                else:
+                    icon = "•"
 
-    # คำนวณ Sector เฉลี่ย
-    for sector, coins in SECTORS.items():
-        valid_coins = [results[c]["pct"] for c in coins if c in results and c != "XAUUSDT"]
-        sector_pct[sector] = sum(valid_coins) / len(valid_coins) if valid_coins else 0.0
+                item_str = f"{icon} <b>{sym}</b> <code>[{tier}]</code> | <code>{price}</code> ➔ {fact_str}"
+                
+                if bucket in ["PLAN_A_BUY", "PLAN_A_SELL"]: plan_a_str_list.append(item_str)
+                elif bucket in ["PLAN_B_BUY", "PLAN_B_SELL"]: plan_b_str_list.append(item_str)
+                elif bucket == "REVERSAL": rev_str_list.append(item_str)
+                elif bucket == "AVOID": avoid_str_list.append(item_str)
 
-    # คำนวณ Market Breadth (33 คริปโต)
+    # ดึงค่าจัดอันดับ Volume / Gainers / Losers
     for c in WATCHLIST:
         if c != "XAUUSDT" and c in results:
-            pct_val = results[c]["pct"]
-            crypto_data.append((c, pct_val, results[c]["vol"]))
-            if pct_val > 0: green_count += 1
-            elif pct_val < 0: red_count += 1
+            crypto_data.append((c, results[c]["pct_1h"], results[c]["vol"]))
 
     crypto_data.sort(key=lambda x: x[1], reverse=True)
     top_gainers = [f"{s.replace('USDT','')} ({p:+.2f}%)" for s, p, v in crypto_data[:2]]
@@ -252,89 +258,75 @@ def main():
     crypto_data.sort(key=lambda x: x[2], reverse=True)
     top_vol = [f"{s.replace('USDT','')} (x{v:.1f})" for s, p, v in crypto_data if v >= 2.0][:2]
 
-    session_name, session_rule = get_session_context()
-    btc_perf = results.get("BTCUSDT", {}).get("pct", 0.0)
-    gold_perf = results.get("XAUUSDT", {}).get("pct", 0.0)
+    btc_perf_24h = results.get("BTCUSDT", {}).get("pct_24h", 0.0)
+    gold_perf_24h = results.get("XAUUSDT", {}).get("pct_24h", 0.0)
 
     # --- GEMINI 3.6 FLASH STRICT INSTRUCTION ---
     system_prompt = f"""
-คุณคือ Risk Manager หน้าที่ของคุณคือวิเคราะห์ข้อมูลแล้วสรุป "Fact (ข้อเท็จจริง)" และ "Action (แผน)" เป็น Bullet point สั้นๆ กระชับ ห้ามเขียนบรรยายยาว
+คุณคือนักวิเคราะห์ข่าวเศรษฐกิจและการลงทุนสาย Quant (Broadcaster) หน้าที่ของคุณคือเล่าสถานการณ์ตลาด 1H ที่เพิ่งจบไป และชี้เป้าแผนการเทรดข้างหน้าแบบตรงไปตรงมา ห้ามใช้คำเกริ่นนำหรือลงท้าย ห้ามเขียนทฤษฎียืดเยื้อ ใช้รูปแบบ Bullet Points ตามฟอร์แมตเป๊ะๆ
 
-[ข้อมูลตลาด 1H (33+1 Assets)]
-Session: {session_name}
-ทิศทาง: เขียว {green_count} / แดง {red_count}
-BTC: {btc_perf:+.2f}% | XAU: {gold_perf:+.2f}%
-Gainers: {', '.join(top_gainers)} | Losers: {', '.join(top_losers)}
-Vol Surge: {', '.join(top_vol) if top_vol else 'ไม่มี'}
+[ข้อมูลสรุป 1H Data]
+Macro 24H: BTC {btc_perf_24h:+.2f}% | Gold {gold_perf_24h:+.2f}%
+Top Gainers (1H): {', '.join(top_gainers)} | Top Losers (1H): {', '.join(top_losers)}
+Volume Spike (1H): {', '.join(top_vol) if top_vol else 'ไม่มี'}
+แผนหน้างาน: เตรียมเข้า Plan A ({len(plan_a_str_list)} ตัว), รอทะลุ Plan B ({len(plan_b_str_list)} ตัว)
 
-[ฟอร์แมตการตอบ (ห้ามเปลี่ยน Layout ห้ามใส่คำเกริ่นนำ)]
-🛑 <b>สถานะ:</b> [เช่น เทรนด์จริงเริ่มวิ่ง ลุยตามแผน / ตลาดไซด์เวย์ ทับมือ / ผันผวนช่วงข่าว ระวังกวาด SL]
+[รูปแบบการตอบ (ห้ามเปลี่ยน Layout)]
+🛑 <b>พาดหัวหลัก:</b> [สรุปภาพรวม 1 ประโยค เช่น ตลาดเอเชียเปิดแรง เม็ดเงินไหลออกจากทองคำเข้าเสี่ยงใน Crypto เต็มตัว]
 
-• <b>ข้อเท็จจริงกระแสเงิน (Facts):</b> [สรุปทิศทางเงิน หมุนเข้า BTC, Altcoins หรือหนีเข้า Gold พร้อมระบุ Sector ผู้นำ และ Volume Surge]
-• <b>กฎคุมความเสี่ยง {session_name.split(' ')[0]}:</b> {session_rule}
-• <b>คำสั่งหน้างาน:</b> [สรุปเป้าโฟกัส อิงจากรายการ BUY/SELL/REVERSAL และสั่งห้ามไล่ราคาตัวที่ติดโซนเลี่ยงเทรด]
+• <b>สรุปเหตุการณ์ 1H ที่ผ่านมา:</b> [อธิบายเม็ดเงินไหลเข้า/ออก ระหว่าง BTC และกลุ่ม Altcoins (Gainers/Losers) เทียบกับ Gold]
+• <b>สัญญาณ Volume ผิดปกติ:</b> [รายงานเหรียญใน Volume Spike พร้อมประเมินสั้นๆ ว่าโดนเทขายหรือโดนดันราคา]
+• <b>จุดรอเก็บเต็มคำ & แผนข้างหน้า:</b> [ชี้เป้าเหรียญในกลุ่ม Plan A ว่าตัวไหนน่าโฟกัสเข้าเทรด หรือถ้า Plan B เยอะให้บอกว่ารอจุดตัดจบรอบ]
+• <b>ข้อควรระวังเร่งด่วน:</b> [เตือนให้เลี่ยงเหรียญ Avoid หรือระวังความเสี่ยงจากความผันผวนของ BTC]
 """
 
-    ai_insight = "⚠️ ขัดข้อง ไม่สามารถเชื่อมต่อ AI ได้ (gemini-3.6-flash: Quota Exceeded / 429)"
+    ai_insight = "⚠️ ขัดข้อง ไม่สามารถเชื่อมต่อ AI ได้"
     if GEMINI_API_KEY:
         try:
             client = genai.Client(api_key=GEMINI_API_KEY.strip())
             for attempt in range(1, 4):
                 try:
-                    print(f"⏳ Sending to Gemini API (gemini-3.6-flash) [Attempt {attempt}/3]...")
                     response = client.models.generate_content(
                         model='gemini-3.6-flash',
                         contents=system_prompt,
                     )
                     if response and response.text:
                         ai_insight = response.text.strip()
-                        print("✅ AI ประมวลผลสำเร็จ")
                         break
                 except Exception as e:
-                    print(f"⚠️ API Error: {e}")
                     if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
-                        print("🚨 ชนเพดาน Rate Limit (Free Tier: 20 ครั้ง/วัน) กรุณาผูก Billing ใน Google AI Studio")
                         break
                     time.sleep(3)
-        except Exception as e:
-            print(f"❌ Gemini Setup Error: {e}")
+        except Exception: pass
 
-    buy_str = "\n".join(action_buy[:3]) if action_buy else "  • (ไม่มีเหรียญเข้าเกณฑ์)"
-    sell_str = "\n".join(action_sell[:3]) if action_sell else "  • (ไม่มีเหรียญเข้าเกณฑ์)"
-    rev_str = "\n".join(action_rev[:3]) if action_rev else "  • (ไม่มีเหรียญเข้าเกณฑ์)"
-    avoid_str = "\n".join(action_avoid[:3]) if action_avoid else "  • (ไม่มีเหรียญที่อันตรายชัดเจน)"
-
-    total_crypto = green_count + red_count
-    bull_pct = int((green_count / total_crypto * 100)) if total_crypto > 0 else 0
+    # จัดหน้า UI
+    str_plan_a = "\n".join(plan_a_str_list) if plan_a_str_list else "• (ยังไม่มีเหรียญเข้าเกณฑ์)"
+    str_plan_b = "\n".join(plan_b_str_list) if plan_b_str_list else "• (ยังไม่มีเหรียญเข้าเกณฑ์)"
+    str_rev = "\n".join(rev_str_list) if rev_str_list else "• (ยังไม่มีสัญญาณกลับตัว)"
+    str_avoid = "\n".join(avoid_str_list) if avoid_str_list else "• (ยังไม่มีเหรียญที่เสี่ยงชัดเจน)"
 
     msg = (
-        f"🧭 <b>[1H MARKET FLOW & MACRO RADAR]</b>\n"
+        f"🧭 <b>[MARKET FLOW & MACRO RADAR]</b>\n"
         f"────────────────────────────\n"
-        f"⏰ <b>ช่วงเวลา:</b> {session_name}\n"
-        f"🌐 <b>ภาพรวมตลาด:</b> 🟢 {green_count} / 🔴 {red_count} (ฝั่งขึ้นครองตลาด {bull_pct}%)\n\n"
-        f"📊 <b>Macro Performance (1H):</b>\n"
-        f"👑 BTC: <code>{btc_perf:+.2f}%</code> | 🥇 Gold: <code>{gold_perf:+.2f}%</code>\n"
-        f"💎 Tier 1: <code>{sector_pct.get('Tier 1', 0.0):+.2f}%</code> | 🧠 AI: <code>{sector_pct.get('AI', 0.0):+.2f}%</code>\n"
-        f"🏗 L1: <code>{sector_pct.get('Layer 1', 0.0):+.2f}%</code> | ⚡ L2: <code>{sector_pct.get('Layer 2', 0.0):+.2f}%</code>\n"
-        f"🏦 DeFi: <code>{sector_pct.get('DeFi', 0.0):+.2f}%</code> | ⛏️ PoW: <code>{sector_pct.get('PoW', 0.0):+.2f}%</code>\n"
-        f"🏛 RWA: <code>{sector_pct.get('RWA', 0.0):+.2f}%</code> | 🔗 Infra: <code>{sector_pct.get('Infra', 0.0):+.2f}%</code>\n\n"
+        f"👑 <b>BTC (24H):</b> <code>{btc_perf_24h:+.2f}%</code> | 🥇 <b>Gold (24H):</b> <code>{gold_perf_24h:+.2f}%</code>\n\n"
         f"⚡️ <b>Outliers & Volume Spike (1H):</b>\n"
         f"🚀 <b>บวกแรง:</b> <code>{', '.join(top_gainers) if top_gainers else '-'}</code>\n"
         f"🩸 <b>ลบหนัก:</b> <code>{', '.join(top_losers) if top_losers else '-'}</code>\n"
         f"⚠️ <b>วอลุ่มพุ่ง:</b> <code>{', '.join(top_vol) if top_vol else 'ปกติ'}</code>\n"
         f"────────────────────────────\n"
-        f"🎯 <b>[1H STRUCTURAL RADAR: พฤติกรรมราคา]</b>\n\n"
-        f"🟢 <b>BUY WATCH (ดักย่อ EMA / จ่อตัด / ทิ้งไส้ล่าง):</b>\n{buy_str}\n\n"
-        f"🔴 <b>SELL WATCH (ดักเด้ง EMA / จ่อหลุด / ทิ้งไส้บน):</b>\n{sell_str}\n\n"
-        f"🔄 <b>REVERSAL (Divergence / จบรอบ / False Break):</b>\n{rev_str}\n\n"
-        f"⛔️ <b>โซนเลี่ยงเทรด (ปลายน้ำตึงจัด / ไซด์เวย์ไร้ทรง):</b>\n{avoid_str}\n"
+        f"🎯 <b>[1H STRUCTURAL RADAR: ชี้เป้าโฟกัส]</b>\n"
+        f"*(คัดกรองด้วย Anti-Saw & EMA Guard)*\n\n"
+        f"⚡️ <b>PLAN A [ZERO-STATION: ดักย่อ/เด้ง ชิดฐาน EMA89]:</b>\n{str_plan_a}\n\n"
+        f"🚀 <b>PLAN B [MOMENTUM TRIGGER: จ่อตัด/พุ่งทะลุ EMA 21x35]:</b>\n{str_plan_b}\n\n"
+        f"🔄 <b>REVERSAL / DIVERGENCE:</b>\n{str_rev}\n\n"
+        f"⛔️ <b>AVOID LIST (ตึงจัด / ฟันปลา):</b>\n{str_avoid}\n"
         f"────────────────────────────\n"
-        f"🤖 <b>AI TACTICAL DIRECTIVE:</b>\n"
+        f"🎙️ <b>AI TACTICAL DIRECTIVE (Economic Briefing):</b>\n"
         f"{ai_insight}"
     )
     
     send_telegram_msg(msg)
-    print("✅ สแกน 33+1 สินทรัพย์ และส่งรายงาน 1H เรียบร้อย")
+    print("✅ สแกน 33+1 สินทรัพย์ และส่งรายงานเรียบร้อย")
 
 if __name__ == "__main__":
     main()
