@@ -16,7 +16,7 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 
-# 📋 WATCHLIST 50 ASSETS (Alphabetical A-Z)
+# 📋 WATCHLIST 50 ASSETS
 WATCHLIST = [
     "AAVEUSDT", "ADAUSDT",  "APTUSDT",  "ARBUSDT",  "ARKMUSDT",
     "ATOMUSDT", "AVAXUSDT", "BCHUSDT",  "BNBUSDT",  "BTCUSDT",
@@ -31,12 +31,13 @@ WATCHLIST = [
 ]
 
 def format_grid(coins, cols=3):
-    """จัดระเบียบตาราง 3 คอลัมน์ ความกว้าง 11 ตัวอักษร Monospace ตามต้นฉบับ 15M"""
+    """จัดระเบียบตาราง 3 คอลัมน์ ความกว้าง 11 ตัวอักษร เพื่อเว้นช่องไฟให้สวยงามตามต้นฉบับ"""
     if not coins: 
         return "  • ไม่มี"
     rows = []
     for i in range(0, len(coins), cols):
         chunk = coins[i : i + cols]
+        # จัด Format ให้มีความกว้าง 11 ตัวอักษร ชิดซ้าย Monospace ตรงตามต้นฉบับเป๊ะ
         rows.append("  " + " ".join([f"`{c:<11}`" for c in chunk]))
     return "\n".join(rows)
 
@@ -119,7 +120,7 @@ def analyze_1h_structure(symbol):
         return symbol, 0.0, 0.0, 1.0, "NONE"
 
     try:
-        # ดึงแท่งที่ปิดสมบูรณ์แล้วล่าสุด (iloc[-2]) ป้องกัน Repainting
+        # ตัดแท่งปัจจุบันออก ตรวจสอบเฉพาะแท่งที่ปิดสมบูรณ์แล้วล่าสุด (iloc[-2])
         c_closed = float(df["close"].iloc[-2])
         prev_close = float(df["close"].iloc[-3])
         pct_change_1h = ((c_closed - prev_close) / prev_close) * 100.0
@@ -127,7 +128,7 @@ def analyze_1h_structure(symbol):
         close_24h_ago = float(df["close"].iloc[-26]) if len(df) >= 26 else float(df["close"].iloc[0])
         pct_change_24h = ((c_closed - close_24h_ago) / close_24h_ago) * 100.0
         
-        # Volume Surge เทียบค่าเฉลี่ย 24 ชม.
+        # Volume Surge
         vol_current = float(df["volume"].iloc[-2])
         vol_avg = float(df["volume"].iloc[-26:-2].mean())
         vol_surge = (vol_current / vol_avg) if vol_avg > 0 else 1.0
@@ -168,8 +169,10 @@ def send_telegram_msg(message):
     try:
         res = http.post(url, json=payload, timeout=10)
         if res.status_code != 200:
-            plain = message.replace("*", "").replace("`", "").replace("_", "")
-            http.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": plain}, timeout=10)
+            # แก้ไข Markdown Parser Error แบบไม่ลบ Backtick (คงตาราง Monospace ไว้ 100%)
+            sanitized = message.replace("_", " ").replace("*", "")
+            payload["text"] = sanitized
+            http.post(url, json=payload, timeout=10)
     except Exception as e:
         print(f"[!] Telegram Exception: {e}")
 
@@ -212,7 +215,7 @@ def main():
     btc_perf_24h = results.get("BTCUSDT", {}).get("pct_24h", 0.0)
     gold_perf_24h = results.get("XAUUSDT", {}).get("pct_24h", 0.0)
 
-    # --- GEMINI STRICT INSTRUCTION (gemini-3.6-flash) ---
+    # --- GEMINI STRICT INSTRUCTION (gemini-3.6-flash ONLY) ---
     system_prompt = f"""
 คุณคือนักวิเคราะห์เศรษฐศาสตร์ Macro และ Quant Risk Manager หน้าที่ของคุณคือวิเคราะห์สภาวะตลาดประจำชั่วโมงและให้คำแนะนำด้านการคุมความเสี่ยง (Risk & Portfolio Allocation) อย่างมืออาชีพ ห้ามใช้คำสแลงเด็ดขาด ตอบตามโครงสร้างนี้เป๊ะๆ (ไม่ต้องมีคำเกริ่นนำหรือคำลงท้าย):
 
@@ -243,7 +246,9 @@ def main():
                         contents=system_prompt,
                     )
                     if response and response.text:
-                        ai_insight = response.text.strip()
+                        # ป้องกัน Markdown ซ้อนทับที่ไม่ถูกต้อง
+                        clean_text = response.text.strip().replace("`", "'")
+                        ai_insight = clean_text
                         break
                 except Exception as e:
                     if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
