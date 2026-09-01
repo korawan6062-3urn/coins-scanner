@@ -31,6 +31,7 @@ WATCHLIST = [
 ]
 
 def format_grid(coins, cols=3):
+    """จัดระเบียบตาราง 3 คอลัมน์ ความกว้าง 11 ตัวอักษร Monospace ตามต้นฉบับ 15M"""
     if not coins: 
         return "  • ไม่มี"
     rows = []
@@ -118,6 +119,7 @@ def analyze_1h_structure(symbol):
         return symbol, 0.0, 0.0, 1.0, "NONE"
 
     try:
+        # ดึงแท่งที่ปิดสมบูรณ์แล้วล่าสุด (iloc[-2]) ป้องกัน Repainting
         c_closed = float(df["close"].iloc[-2])
         prev_close = float(df["close"].iloc[-3])
         pct_change_1h = ((c_closed - prev_close) / prev_close) * 100.0
@@ -125,15 +127,18 @@ def analyze_1h_structure(symbol):
         close_24h_ago = float(df["close"].iloc[-26]) if len(df) >= 26 else float(df["close"].iloc[0])
         pct_change_24h = ((c_closed - close_24h_ago) / close_24h_ago) * 100.0
         
+        # Volume Surge เทียบค่าเฉลี่ย 24 ชม.
         vol_current = float(df["volume"].iloc[-2])
         vol_avg = float(df["volume"].iloc[-26:-2].mean())
         vol_surge = (vol_current / vol_avg) if vol_avg > 0 else 1.0
 
+        # Pure EMA Calculation
         ema21 = float(df["close"].ewm(span=21, adjust=False).mean().iloc[-2])
         ema35 = float(df["close"].ewm(span=35, adjust=False).mean().iloc[-2])
         ema89 = float(df["close"].ewm(span=89, adjust=False).mean().iloc[-2])
         ema200 = float(df["close"].ewm(span=200, adjust=False).mean().iloc[-2])
 
+        # ------------------ PURE EMA REGIME CLASSIFICATION ------------------
         state = "NONE"
         if ema89 > ema200:
             if ema21 > ema35:
@@ -207,7 +212,7 @@ def main():
     btc_perf_24h = results.get("BTCUSDT", {}).get("pct_24h", 0.0)
     gold_perf_24h = results.get("XAUUSDT", {}).get("pct_24h", 0.0)
 
-    # --- GEMINI STRICT INSTRUCTION (gemini-3.6-flash ONLY) ---
+    # --- GEMINI STRICT INSTRUCTION (gemini-3.6-flash) ---
     system_prompt = f"""
 คุณคือนักวิเคราะห์เศรษฐศาสตร์ Macro และ Quant Risk Manager หน้าที่ของคุณคือวิเคราะห์สภาวะตลาดประจำชั่วโมงและให้คำแนะนำด้านการคุมความเสี่ยง (Risk & Portfolio Allocation) อย่างมืออาชีพ ห้ามใช้คำสแลงเด็ดขาด ตอบตามโครงสร้างนี้เป๊ะๆ (ไม่ต้องมีคำเกริ่นนำหรือคำลงท้าย):
 
