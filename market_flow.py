@@ -31,7 +31,6 @@ WATCHLIST = [
 ]
 
 def format_grid(coins, cols=3):
-    """จัดระเบียบตาราง 3 คอลัมน์ ความกว้าง 11 ตัวอักษร เพื่อเว้นช่องไฟให้สวยงาม"""
     if not coins: 
         return "  • ไม่มี"
     rows = []
@@ -119,7 +118,6 @@ def analyze_1h_structure(symbol):
         return symbol, 0.0, 0.0, 1.0, "NONE"
 
     try:
-        # ตัดแท่งปัจจุบันออก ตรวจสอบเฉพาะแท่งที่ปิดสมบูรณ์แล้วล่าสุด
         c_closed = float(df["close"].iloc[-2])
         prev_close = float(df["close"].iloc[-3])
         pct_change_1h = ((c_closed - prev_close) / prev_close) * 100.0
@@ -127,18 +125,15 @@ def analyze_1h_structure(symbol):
         close_24h_ago = float(df["close"].iloc[-26]) if len(df) >= 26 else float(df["close"].iloc[0])
         pct_change_24h = ((c_closed - close_24h_ago) / close_24h_ago) * 100.0
         
-        # Volume Surge
         vol_current = float(df["volume"].iloc[-2])
         vol_avg = float(df["volume"].iloc[-26:-2].mean())
         vol_surge = (vol_current / vol_avg) if vol_avg > 0 else 1.0
 
-        # Pure EMA Calculation
         ema21 = float(df["close"].ewm(span=21, adjust=False).mean().iloc[-2])
         ema35 = float(df["close"].ewm(span=35, adjust=False).mean().iloc[-2])
         ema89 = float(df["close"].ewm(span=89, adjust=False).mean().iloc[-2])
         ema200 = float(df["close"].ewm(span=200, adjust=False).mean().iloc[-2])
 
-        # ------------------ PURE EMA REGIME CLASSIFICATION ------------------
         state = "NONE"
         if ema89 > ema200:
             if ema21 > ema35:
@@ -212,7 +207,7 @@ def main():
     btc_perf_24h = results.get("BTCUSDT", {}).get("pct_24h", 0.0)
     gold_perf_24h = results.get("XAUUSDT", {}).get("pct_24h", 0.0)
 
-    # --- GEMINI STRICT MACRO & RISK ADVICE INSTRUCTION ---
+    # --- GEMINI STRICT INSTRUCTION (gemini-3.6-flash ONLY) ---
     system_prompt = f"""
 คุณคือนักวิเคราะห์เศรษฐศาสตร์ Macro และ Quant Risk Manager หน้าที่ของคุณคือวิเคราะห์สภาวะตลาดประจำชั่วโมงและให้คำแนะนำด้านการคุมความเสี่ยง (Risk & Portfolio Allocation) อย่างมืออาชีพ ห้ามใช้คำสแลงเด็ดขาด ตอบตามโครงสร้างนี้เป๊ะๆ (ไม่ต้องมีคำเกริ่นนำหรือคำลงท้าย):
 
@@ -239,7 +234,7 @@ def main():
             for attempt in range(1, 4):
                 try:
                     response = client.models.generate_content(
-                        model='gemini-2.5-flash',
+                        model='gemini-3.6-flash',
                         contents=system_prompt,
                     )
                     if response and response.text:
@@ -249,11 +244,11 @@ def main():
                     if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
                         break
                     time.sleep(3)
-        except Exception: 
+        except Exception:
             pass
 
     msg = [
-        "🧭 *[MARKET FLOW & MACRO RADAR]*",
+        "🧭 *MARKET FLOW & MACRO RADAR*",
         "────────────────────────────",
         f"👑 *BTC (24H):* `{btc_perf_24h:+.2f}%` | 🥇 *Gold (24H):* `{gold_perf_24h:+.2f}%`\n",
         "⚡️ *Outliers & Volume Surge (1H):*",
@@ -261,22 +256,22 @@ def main():
         f"🩸 *Losers:* `{', '.join(top_losers) if top_losers else '-'}`",
         f"⚠️ *Volume Surge:* `{', '.join(top_vol) if top_vol else 'ปกติ'}`",
         "────────────────────────────",
-        "🎯 *[1H EMA STRUCTURAL REGIME]*\n",
+        "🎯 *1H EMA STRUCTURAL REGIME*\n",
         "🟢 *1. BUY ZONE (EMA 89 > 200)*",
-        "🟩 *GREEN (21 > 35 | เทรนด์สมบูรณ์) :*",
+        "• *GREEN (21 > 35 | เทรนด์สมบูรณ์) :*",
         format_grid(regime_data["BUY_GREEN"]), "",
-        "🟨 *YELLOW (21 < 35 | ย่อตัว/พักฐาน) :*",
+        "• *YELLOW (21 < 35 | ย่อตัว/พักฐาน) :*",
         format_grid(regime_data["BUY_YELLOW"]),
         "────────────────────────────",
         "🔴 *2. SELL ZONE (EMA 89 < 200)*",
-        "🟩 *GREEN (21 < 35 | เทรนด์สมบูรณ์) :*",
+        "• *GREEN (21 < 35 | เทรนด์สมบูรณ์) :*",
         format_grid(regime_data["SELL_GREEN"]), "",
-        "🟨 *YELLOW (21 > 35 | ดีดรีบาวด์)   :*",
+        "• *YELLOW (21 > 35 | ดีดรีบาวด์)   :*",
         format_grid(regime_data["SELL_YELLOW"]),
         "────────────────────────────",
         f"{ai_insight}"
     ]
-    
+
     send_telegram_msg("\n".join(msg))
     print("✅ สแกน 1H Structural Radar เสร็จสิ้นและส่งรายงานเรียบร้อย")
 
