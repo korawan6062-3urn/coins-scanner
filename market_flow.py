@@ -35,7 +35,6 @@ def format_price(val):
     else: return f"{val:.6f}"
 
 # ======================== 2. DATA FETCHER ROUTER ========================
-# ⚡️ [อัปเดต] ขยาย limit=500 เพื่อ Warm-up สมการ EMA200 ให้แม่นยำสูงสุด
 def get_binance_candles(symbol, timeframe="1h", limit=500):
     if symbol in ["XAUUSDT", "XAUTUSDT"]: return None
     endpoints = [
@@ -101,7 +100,6 @@ def fetch_candles(symbol, timeframe="1h", limit=500):
 # ==========================================
 def analyze_1h_structure(symbol):
     df = fetch_candles(symbol, "1h", 500)
-    # ⚡️ เช็คความเพียงพอของข้อมูลขั้นต่ำ (ต้องมากกว่า 250 แท่งเพื่อให้ EMA200 อุ่นเครื่องเสร็จ)
     if df is None or len(df) < 250: 
         return symbol, 0.0, 0.0, 1.0, "NONE", {}
 
@@ -121,7 +119,7 @@ def analyze_1h_structure(symbol):
         vol_avg = df["volume"].iloc[-26:-2].mean()
         vol_surge = (vol_current / vol_avg) if vol_avg > 0 else 1.0
 
-        # Indicators
+        # EMA Indicators
         ema21_series = df["close"].ewm(span=21, adjust=False).mean()
         ema35_series = df["close"].ewm(span=35, adjust=False).mean()
         ema89_series = df["close"].ewm(span=89, adjust=False).mean()
@@ -130,6 +128,7 @@ def analyze_1h_structure(symbol):
         ema21, ema35, ema89, ema200 = ema21_series.iloc[-2], ema35_series.iloc[-2], ema89_series.iloc[-2], ema200_series.iloc[-2]
         ema21_prev, ema35_prev = ema21_series.iloc[-3], ema35_series.iloc[-3]
 
+        # MACD Calculation
         macd_line = df["close"].ewm(span=12, adjust=False).mean() - df["close"].ewm(span=26, adjust=False).mean()
         macd_sig = macd_line.ewm(span=9, adjust=False).mean()
         macd_hist = macd_line - macd_sig
@@ -168,11 +167,28 @@ def analyze_1h_structure(symbol):
                 elif cross_dn or dist_21_35_pct <= 0.10:
                     bucket = "PLAN_B_SELL"
         
-        # 3. ตรวจจับ Divergence 1H
+        # 3. [UPDATED] ตรวจจับ Divergence 1H แบบ Swing Pivot (Lookback 48 Bars)
         if bucket == "NONE":
-            if l_closed < df["low"].iloc[-10:-2].min() and macd_hist.iloc[-2] > macd_hist.iloc[-10:-2].min():
+            # หาจุด Swing ต่ำสุด/สูงสุดในอดีต (10 ถึง 48 แท่งก่อนหน้า)
+            hist_low_past = df["low"].iloc[-48:-10].min()
+            macd_trough_past = macd_line.iloc[-48:-10].min()
+            
+            hist_high_past = df["high"].iloc[-48:-10].max()
+            macd_peak_past = macd_line.iloc[-48:-10].max()
+
+            # ค่า Low/High ล่าสุด (10 แท่งล่าสุด)
+            recent_low = df["low"].iloc[-10:-1].min()
+            recent_macd_low = macd_line.iloc[-10:-1].min()
+
+            recent_high = df["high"].iloc[-10:-1].max()
+            recent_macd_high = macd_line.iloc[-10:-1].max()
+
+            # 🟢 Bullish Divergence: ราคาทำ Low ใหม่ต่ำกว่าอดีต แต่ MACD ยกฐานสูงขึ้น
+            if recent_low < hist_low_past and recent_macd_low > macd_trough_past and macd_line.iloc[-2] < 0:
                 bucket = "REV_BULL"
-            elif h_closed > df["high"].iloc[-10:-2].max() and macd_hist.iloc[-2] < macd_hist.iloc[-10:-2].max():
+
+            # 🔴 Bearish Divergence: ราคาทำ High ใหม่สูงกว่าอดีต แต่ MACD กดต่ำลง
+            elif recent_high > hist_high_past and recent_macd_high < macd_peak_past and macd_line.iloc[-2] > 0:
                 bucket = "REV_BEAR"
 
         return symbol, pct_change_1h, pct_change_24h, vol_surge, bucket, {"price": c_closed}
@@ -265,7 +281,6 @@ def main():
                     time.sleep(3)
         except Exception: pass
 
-    # จัดหน้า UI แบบ No-Water (ไม่มีคำบรรยาย)
     str_a_buy = ", ".join(plan_a_buy) if plan_a_buy else "<i>ไม่มี</i>"
     str_a_sell = ", ".join(plan_a_sell) if plan_a_sell else "<i>ไม่มี</i>"
     str_b_buy = ", ".join(plan_b_buy) if plan_b_buy else "<i>ไม่มี</i>"
