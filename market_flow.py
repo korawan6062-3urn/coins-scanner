@@ -4,7 +4,6 @@ import time
 import requests
 import pandas as pd
 import warnings
-from datetime import datetime, timezone, timedelta
 from concurrent.futures import ThreadPoolExecutor
 from google import genai
 
@@ -12,27 +11,21 @@ warnings.filterwarnings("ignore")
 http = requests.Session()
 http.headers.update({"User-Agent": "Mozilla/5.0"})
 
-# --- Token & API Key ---
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+# ======================== 1. CONFIGURATION & SECRETS ========================
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 
-# ==========================================
-# 📋 33+1 ASSETS STRUCTURE
-# ==========================================
-SECTORS = {
-    "Macro Core": ["BTCUSDT", "XAUUSDT"],
-    "Tier 1": ["ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT"],
-    "PoW": ["BCHUSDT", "ETCUSDT", "KASUSDT", "LTCUSDT", "ZECUSDT"],
-    "Layer 1": ["APTUSDT", "AVAXUSDT", "INJUSDT", "NEARUSDT", "SUIUSDT"],
-    "Layer 2": ["ARBUSDT", "OPUSDT", "POLUSDT"],
-    "RWA": ["ONDOUSDT"],
-    "AI": ["ARKMUSDT", "FETUSDT", "RENDERUSDT", "TAOUSDT", "WLDUSDT"],
-    "DeFi": ["AAVEUSDT", "DYDXUSDT", "ENAUSDT", "PENDLEUSDT", "UNIUSDT"],
-    "Infra": ["GRTUSDT", "JUPUSDT", "LINKUSDT", "PYTHUSDT"]
-}
-
-WATCHLIST = [coin for group in SECTORS.values() for coin in group]
+WATCHLIST = [
+    "BNBUSDT", "BTCUSDT", "ETHUSDT", "SOLUSDT", "XAUUSDT", "XRPUSDT",
+    "ARKMUSDT", "FETUSDT", "NEARUSDT", "RENDERUSDT", "TAOUSDT", "WLDUSDT",
+    "AAVEUSDT", "DYDXUSDT", "ENAUSDT", "JUPUSDT", "LINKUSDT", "ONDOUSDT", "PENDLEUSDT",
+    "ADAUSDT", "APTUSDT", "ATOMUSDT", "AVAXUSDT", "DOTUSDT", "GRTUSDT", 
+    "ICPUSDT", "INJUSDT", "KASUSDT", "PYTHUSDT", "SEIUSDT", "SUIUSDT",
+    "ARBUSDT", "MANTAUSDT", "POLUSDT", "OPUSDT", "STRKUSDT", "TIAUSDT", "ZKUSDT",
+    "DOGEUSDT", "GALAUSDT", "PEPEUSDT", "RUNEUSDT", "SANDUSDT", "SHIBUSDT",
+    "BCHUSDT", "ETCUSDT", "LTCUSDT", "STXUSDT", "UNIUSDT", "ZECUSDT"
+]
 
 def format_price(val):
     if pd.isna(val): return "0.00"
@@ -41,10 +34,9 @@ def format_price(val):
     elif abs(val) >= 1: return f"{val:.4f}"
     else: return f"{val:.6f}"
 
-# ==========================================
-# 🌐 CORE ROUTER FETCHER (100% ORIGINAL)
-# ==========================================
-def get_binance_candles(symbol, timeframe="1h", limit=250):
+# ======================== 2. DATA FETCHER ROUTER ========================
+# ⚡️ [อัปเดต] ขยาย limit=500 เพื่อ Warm-up สมการ EMA200 ให้แม่นยำสูงสุด
+def get_binance_candles(symbol, timeframe="1h", limit=500):
     if symbol in ["XAUUSDT", "XAUTUSDT"]: return None
     endpoints = [
         f"https://fapi.binance.com/fapi/v1/klines?symbol={symbol}&interval={timeframe}&limit={limit}",
@@ -61,7 +53,7 @@ def get_binance_candles(symbol, timeframe="1h", limit=250):
         except: continue
     return None
 
-def get_gateio_candles(symbol, timeframe="1h", limit=250):
+def get_gateio_candles(symbol, timeframe="1h", limit=500):
     base_sym = symbol[:-4] if symbol.endswith("USDT") else symbol
     pair = f"{base_sym}_USDT"
     endpoints = [
@@ -85,10 +77,10 @@ def get_gateio_candles(symbol, timeframe="1h", limit=250):
         except: continue
     return None
 
-def get_kucoin_candles(symbol, timeframe="1h", limit=250):
+def get_kucoin_candles(symbol, timeframe="1h", limit=500):
     base_sym = symbol[:-4] if symbol.endswith("USDT") else symbol
     tf_map = {"5m": "5min", "15m": "15min", "1h": "1hour", "4h": "4hour"}
-    url = f"https://api.kucoin.com/api/v1/market/candles?type={tf_map.get(timeframe, timeframe)}&symbol={base_sym}-USDT"
+    url = f"https://api.kucoin.com/api/v1/market/candles?type={tf_map.get(timeframe, timeframe)}&symbol={base_sym}-USDT&pageSize={limit}"
     try:
         res = http.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=4).json()
         if res.get("code") == "200000" and "data" in res and len(res["data"]) >= limit // 2:
@@ -97,7 +89,7 @@ def get_kucoin_candles(symbol, timeframe="1h", limit=250):
     except: pass
     return None
 
-def fetch_candles(symbol, timeframe="1h", limit=250):
+def fetch_candles(symbol, timeframe="1h", limit=500):
     df = get_binance_candles(symbol, timeframe, limit)
     if df is not None: return df
     df = get_gateio_candles(symbol, timeframe, limit)
@@ -108,8 +100,9 @@ def fetch_candles(symbol, timeframe="1h", limit=250):
 # 📊 1H STRUCTURAL ANALYSIS (PURE LOGIC)
 # ==========================================
 def analyze_1h_structure(symbol):
-    df = fetch_candles(symbol, "1h", 250)
-    if df is None or len(df) < 200: 
+    df = fetch_candles(symbol, "1h", 500)
+    # ⚡️ เช็คความเพียงพอของข้อมูลขั้นต่ำ (ต้องมากกว่า 250 แท่งเพื่อให้ EMA200 อุ่นเครื่องเสร็จ)
+    if df is None or len(df) < 250: 
         return symbol, 0.0, 0.0, 1.0, "NONE", {}
 
     try:
@@ -132,8 +125,9 @@ def analyze_1h_structure(symbol):
         ema21_series = df["close"].ewm(span=21, adjust=False).mean()
         ema35_series = df["close"].ewm(span=35, adjust=False).mean()
         ema89_series = df["close"].ewm(span=89, adjust=False).mean()
+        ema200_series = df["close"].ewm(span=200, adjust=False).mean()
         
-        ema21, ema35, ema89 = ema21_series.iloc[-2], ema35_series.iloc[-2], ema89_series.iloc[-2]
+        ema21, ema35, ema89, ema200 = ema21_series.iloc[-2], ema35_series.iloc[-2], ema89_series.iloc[-2], ema200_series.iloc[-2]
         ema21_prev, ema35_prev = ema21_series.iloc[-3], ema35_series.iloc[-3]
 
         macd_line = df["close"].ewm(span=12, adjust=False).mean() - df["close"].ewm(span=26, adjust=False).mean()
@@ -161,14 +155,14 @@ def analyze_1h_structure(symbol):
         # 2. คัดกรองตามระบบ (Pure EMA Guard, ไม่ใช้ MACD บน 1H)
         elif bucket == "NONE":
             # 🟢 [BULLISH REGIME]
-            if ema21 > ema35 and ema35 > ema89:
+            if ema89 > ema200 and ema21 > ema35:
                 if dist_89_pct <= 0.50:
                     bucket = "PLAN_A_BUY"
                 elif cross_up or dist_21_35_pct <= 0.10:
                     bucket = "PLAN_B_BUY"
             
             # 🔴 [BEARISH REGIME]
-            elif ema21 < ema35 and ema35 < ema89:
+            elif ema89 < ema200 and ema21 < ema35:
                 if dist_89_pct <= 0.50:
                     bucket = "PLAN_A_SELL"
                 elif cross_dn or dist_21_35_pct <= 0.10:
@@ -197,7 +191,7 @@ def send_telegram_msg(message, parse_mode="HTML"):
 # 🚀 MAIN PIPELINE
 # ==========================================
 def main():
-    print("🚀 สแกนข้อมูล 1H Structural Radar (33+1 Assets)...")
+    print("🚀 สแกนข้อมูล 1H Structural Radar (50 Assets)...")
     
     results = {}
     crypto_data = []
@@ -307,7 +301,7 @@ def main():
     )
     
     send_telegram_msg(msg)
-    print("✅ สแกน 33+1 สินทรัพย์ และส่งรายงานเรียบร้อย")
+    print("✅ สแกน 50 สินทรัพย์ และส่งรายงานเรียบร้อย")
 
 if __name__ == "__main__":
     main()
