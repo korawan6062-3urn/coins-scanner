@@ -1,6 +1,13 @@
+## =========================================================================
+## LOG VER: 3.9 (1H Macro Flow & Pure Radar - Time-Gated & Bi-Directional)
+## - หัวข้อการแก้ไข: อัปเกรดระบบ AI Directive ปรับรอบรายงานปฏิทินเศรษฐกิจ Tier-1 สหรัฐฯ เป็นรอบ 07:00 น. วันละครั้ง และปลดล็อกการวิเคราะห์สองฝั่ง (BUY/SELL)
+## - ตัด Option เดิม: ตัดการรายงานปฏิทินเศรษฐกิจล่วงหน้า 1 ชั่วโมงในรอบปกติ (ซ่อนหัวข้อตั้งแต่ 08:00 - 06:00 น.)
+## - เพิ่มจากสิ่งที่ไม่มี: เพิ่มมิติวิเคราะห์ดัชนีดอลลาร์ (DXY) ใน Capital Flow, เพิ่มระบบจัดสรร 50% Margin ระบุสัดส่วนสินทรัพย์ และระบุทิศทาง Buy/Sell สองหน้า
+## =========================================================================
 import os
 import sys
 import time
+import datetime
 import requests
 import pandas as pd
 import warnings
@@ -37,7 +44,6 @@ def format_grid(coins, cols=3):
     rows = []
     for i in range(0, len(coins), cols):
         chunk = coins[i : i + cols]
-        # จัด Format ให้มีความกว้าง 11 ตัวอักษร ชิดซ้าย Monospace ตรงตามต้นฉบับเป๊ะ
         rows.append("  " + " ".join([f"`{c:<11}`" for c in chunk]))
     return "\n".join(rows)
 
@@ -120,7 +126,6 @@ def analyze_1h_structure(symbol):
         return symbol, 0.0, 0.0, 1.0, "NONE"
 
     try:
-        # ตัดแท่งปัจจุบันออก ตรวจสอบเฉพาะแท่งที่ปิดสมบูรณ์แล้วล่าสุด (iloc[-2])
         c_closed = float(df["close"].iloc[-2])
         prev_close = float(df["close"].iloc[-3])
         pct_change_1h = ((c_closed - prev_close) / prev_close) * 100.0
@@ -128,18 +133,15 @@ def analyze_1h_structure(symbol):
         close_24h_ago = float(df["close"].iloc[-26]) if len(df) >= 26 else float(df["close"].iloc[0])
         pct_change_24h = ((c_closed - close_24h_ago) / close_24h_ago) * 100.0
         
-        # Volume Surge
         vol_current = float(df["volume"].iloc[-2])
         vol_avg = float(df["volume"].iloc[-26:-2].mean())
         vol_surge = (vol_current / vol_avg) if vol_avg > 0 else 1.0
 
-        # Pure EMA Calculation
         ema21 = float(df["close"].ewm(span=21, adjust=False).mean().iloc[-2])
         ema35 = float(df["close"].ewm(span=35, adjust=False).mean().iloc[-2])
         ema89 = float(df["close"].ewm(span=89, adjust=False).mean().iloc[-2])
         ema200 = float(df["close"].ewm(span=200, adjust=False).mean().iloc[-2])
 
-        # ------------------ PURE EMA REGIME CLASSIFICATION ------------------
         state = "NONE"
         if ema89 > ema200:
             if ema21 > ema35:
@@ -169,7 +171,6 @@ def send_telegram_msg(message):
     try:
         res = http.post(url, json=payload, timeout=10)
         if res.status_code != 200:
-            # แก้ไข Markdown Parser Error แบบไม่ลบ Backtick (คงตาราง Monospace ไว้ 100%)
             sanitized = message.replace("_", " ").replace("*", "")
             payload["text"] = sanitized
             http.post(url, json=payload, timeout=10)
@@ -215,24 +216,34 @@ def main():
     btc_perf_24h = results.get("BTCUSDT", {}).get("pct_24h", 0.0)
     gold_perf_24h = results.get("XAUUSDT", {}).get("pct_24h", 0.0)
 
+    # ⏰ ตรวจสอบเวลาประเทศไทย (UTC+7) สำหรับเงื่อนไขรอบ 07:00 น.
+    now_utc = datetime.datetime.now(datetime.timezone.utc)
+    now_bkk = now_utc + datetime.timedelta(hours=7)
+    is_morning_report = (now_bkk.hour == 7)
+
     # --- GEMINI STRICT INSTRUCTION (gemini-3.6-flash ONLY) ---
+    calendar_prompt_block = ""
+    if is_morning_report:
+        calendar_prompt_block = """
+🏛️ *ปฏิทินเศรษฐกิจสหรัฐฯ Tier-1 ประจำวันนี้:*
+• [ตรวจสอบและแจ้งกำหนดการตัวเลขเศรษฐกิจสำคัญระดับ Tier-1 ของสหรัฐฯ ตลอดทั้งวันพร้อมระบุเวลาไทย (หากไม่มี ให้ระบุว่าไม่มีกำหนดการสำคัญ ตลาดขับเคลื่อนด้วย Technical Flow)]
+"""
+
     system_prompt = f"""
 คุณคือนักวิเคราะห์เศรษฐศาสตร์ Macro และ Quant Risk Manager หน้าที่ของคุณคือวิเคราะห์สภาวะตลาดประจำชั่วโมงและให้คำแนะนำด้านการคุมความเสี่ยง (Risk & Portfolio Allocation) อย่างมืออาชีพ ห้ามใช้คำสแลงเด็ดขาด ตอบตามโครงสร้างนี้เป๊ะๆ (ไม่ต้องมีคำเกริ่นนำหรือคำลงท้าย):
 
 🎙️ *AI MACRO & CAPITAL FLOW DIRECTIVE*
-
-🏛️ *ปฏิทินเศรษฐกิจสหรัฐฯ (ช่วง 1 ชั่วโมงข้างหน้า):*
-• [ตรวจสอบและแจ้งข่าวตัวเลขเศรษฐกิจสหรัฐฯ สำคัญที่มีผลกระทบสูงใน 1 ชั่วโมงนี้ หากไม่มีให้รายงานว่าไม่มีกำหนดการสำคัญ ตลาดขับเคลื่อนด้วย Technical Flow]
-
-🌊 *BTC Dominance & ทิศทางการหมุนเวียนเงินทุน (Capital Flow):*
-• [ประเมินสภาพคล่องว่าไหลเข้า BTC, Gold หรือกระจายเข้า Altcoins อ้างอิงจากความแข็งแกร่ง BTC 24H: {btc_perf_24h:+.2f}% และ Gold 24H: {gold_perf_24h:+.2f}%]
+{calendar_prompt_block}
+🌊 *USD (DXY) & ทิศทางการหมุนเวียนเงินทุน (Capital Flow):*
+• [ประเมินดัชนีดอลลาร์ (DXY) สภาพคล่อง และทิศทางการหมุนเวียนของเงินทุนเปรียบเทียบ 4 มิติ: เงินสด (USD) vs ทองคำ (Gold) vs BTC vs Altcoins อ้างอิงความเคลื่อนไหว BTC 24H: {btc_perf_24h:+.2f}% และ Gold 24H: {gold_perf_24h:+.2f}% พร้อมสรุปการไหลเวียน เช่น USD > Gold > BTC > Altcoins]
 
 🎯 *การบริหารความเสี่ยง & การจัดสรรพอร์ต (Portfolio Risk & Margin Strategy):*
-• *ระดับ Margin:* [แนะนำชัดเจนว่าควรใช้ 100% Full Margin / ลดเหลือ 50% Defensive Margin / หรือสั่ง ทับมือ (Wait & See) พร้อมเหตุผลเชิงความเสี่ยง]
-• *ทิศทางการจัดสรรสินทรัพย์:*
-  * *BTC / Core Assets:* [คำแนะนำการเปิดสถานะในกลุ่มหลัก]
-  * *Altcoins:* [คำแนะนำว่าควรเปิดสถานะตามปกติ ลดความเสี่ยง หรือชะลอการลงทุน]
-  * *Gold (XAU):* [คำแนะนำบทบาทของทองคำ เช่น เป็นสินทรัพย์หลบภัย (Hedge) หรือไม่]
+• *ระดับ Margin:* [แนะนำการใช้ Margin เช่น 100% Full Margin / แบ่ง 50% Defensive Margin พร้อมเหตุผลความเสี่ยง]
+• *การจัดสรร Margin (50% Split):* [หากใช้ 50% แนะนำชัดเจนว่าจะแบ่งไปที่ใด เช่น BTC ___%, Altcoins ___%, Gold ___%]
+• *ทิศทางการเทรดประจำชั่วโมง (Tactical Bias - สองฝั่ง BUY / SELL):*
+  * *BTC / Core Assets:* [ระบุชัดเจนว่าชั่วโมงนี้ควรเน้นฝั่ง BUY (Long) หรือ SELL (Short) สำหรับ Futures พร้อมจุดเฝ้าระวัง ห้ามสั่งทับมือเพียงเพราะตลาดลง]
+  * *Altcoins:* [ระบุชัดเจนว่าควรเน้นเก็งกำไรฝั่ง BUY หรือ SELL ในกลุ่มใด]
+  * *Gold (XAU):* [ระบุทิศทาง BUY หรือ SELL และบทบาทในการเป็นสินทรัพย์ Hedge]
 """
 
     ai_insight = "⚠️ ขัดข้อง ไม่สามารถเชื่อมต่อ AI ได้"
@@ -246,7 +257,6 @@ def main():
                         contents=system_prompt,
                     )
                     if response and response.text:
-                        # ป้องกัน Markdown ซ้อนทับที่ไม่ถูกต้อง
                         clean_text = response.text.strip().replace("`", "'")
                         ai_insight = clean_text
                         break
