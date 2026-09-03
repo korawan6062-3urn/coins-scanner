@@ -13,18 +13,36 @@ http.headers.update({"User-Agent": "Mozilla/5.0"})
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 
-# 📋 WATCHLIST 50 ASSETS (Alphabetical A-Z)
 WATCHLIST = [
-    "AAVEUSDT", "ADAUSDT",  "APTUSDT",  "ARBUSDT",  "ARKMUSDT",
-    "ATOMUSDT", "AVAXUSDT", "BCHUSDT",  "BNBUSDT",  "BTCUSDT",
-    "DOGEUSDT", "DOTUSDT",  "DYDXUSDT", "ENAUSDT",  "ETCUSDT",
-    "ETHUSDT",  "FETUSDT",  "GALAUSDT", "GRTUSDT",  "ICPUSDT",
-    "INJUSDT",  "JUPUSDT",  "KASUSDT",  "LINKUSDT", "LTCUSDT",
-    "MANTAUSDT","NEARUSDT", "ONDOUSDT", "OPUSDT",   "PENDLEUSDT",
-    "PEPEUSDT", "POLUSDT",  "PYTHUSDT", "RENDERUSDT","RUNEUSDT",
-    "SANDUSDT", "SEIUSDT",  "SHIBUSDT", "SOLUSDT",  "STRKUSDT",
-    "STXUSDT",  "SUIUSDT",  "TAOUSDT",  "TIAUSDT",  "UNIUSDT",
-    "WLDUSDT",  "XAUUSDT",  "XRPUSDT",  "ZECUSDT",  "ZKUSDT"
+    # -------------------------------------------------------------
+    # 👑 Tier 1: Mega Liquidity Core (Top 5 สภาพคล่องสูงสุดของตลาด)
+    # -------------------------------------------------------------
+    "XAUUSDT", "BTCUSDT", "ETHUSDT", "BNBUSDT", "XRPUSDT", "SOLUSDT",
+
+    # -------------------------------------------------------------
+    # 💎 Tier 2: Large Caps ($3B - $14B)
+    # -------------------------------------------------------------
+    "ZECUSDT", "XLMUSDT", "LINKUSDT", "ADAUSDT", "UNIUSDT",
+    "BCHUSDT", "LTCUSDT", "HBARUSDT", "AVAXUSDT", "SUIUSDT",
+
+    # -------------------------------------------------------------
+    # 🚀 Tier 3: Mid-High Caps ($1B - $2.5B)
+    # -------------------------------------------------------------
+    "TAOUSDT", "NEARUSDT", "WLDUSDT", "ONDOUSDT", "ENAUSDT",
+    "DOTUSDT", "ETCUSDT", "ARBUSDT",
+
+    # -------------------------------------------------------------
+    # ⚡ Tier 4: Mid Caps ($500M - $1B)
+    # -------------------------------------------------------------
+    "FILUSDT", "POLUSDT", "ALGOUSDT", "ATOMUSDT", "JUPUSDT",
+    "ZROUSDT", "ETHFIUSDT", "DASHUSDT", "ENSUSDT", "PENDLEUSDT",
+    "APTUSDT",
+
+    # -------------------------------------------------------------
+    # 🎯 Tier 5: Active Flow & High Turnover ($360M - $500M)
+    # -------------------------------------------------------------
+    "INJUSDT", "PYTHUSDT", "OPUSDT", "FETUSDT", "TIAUSDT",
+    "LDOUSDT"
 ]
 
 def format_grid(coins, cols=3):
