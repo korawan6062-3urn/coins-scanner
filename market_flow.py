@@ -27,7 +27,7 @@ WATCHLIST = [
     # -------------------------------------------------------------
     # 👑 Tier 1: Mega Liquidity Core (Top 5 สภาพคล่องสูงสุดของตลาด)
     # -------------------------------------------------------------
-    "BTCUSDT", "ETHUSDT", "BNBUSDT", "XRPUSDT", "SOLUSDT",
+    "XAUUSDT", "BTCUSDT", "ETHUSDT", "BNBUSDT", "XRPUSDT", "SOLUSDT",
 
     # -------------------------------------------------------------
     # 💎 Tier 2: Large Caps ($3B - $14B)
