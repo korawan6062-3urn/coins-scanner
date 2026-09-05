@@ -5,6 +5,7 @@
 ## LOG VER 4.1: [Weekend Gate & AI Logic Lock] ติดตั้งระบบกรองวันหยุดสุดสัปดาห์ บล็อก AI มโนข่าว CPI และล็อกสถานะตลาด Gold (XAU) ปิดทำการ พร้อมบังคับตรรกะระดับ Margin ให้สอดคล้องกับ Capital Flow เด็ดขาด
 ## LOG VER 4.2: [Full Strict Logic] ล็อกเงื่อนไข 15M Pullback/Squeeze ด้วย EMA21 และตำแหน่งราคา (Close) ป้องกันการรับมีด
 ## LOG VER 4.3: [Unbound AI Bias] ถอดระบบ AI BTC Grounding ออก คืนอิสระให้กราฟหน้างานและปลดล็อก Bias จาก BTC เพื่อรองรับ Altcoins ที่มี Volume ไหลเข้าอิสระ
+## LOG VER 4.4: [Price Displacement & Early Breakout] เพิ่มเกราะ Fibo Barrier (dist_89 <= 0.382%) ตัดเหรียญตกรถทิ้ง 100% และปลดล็อก Squeeze ให้เตือนทันทีเมื่อ EMA21 เจาะทะลุ EMA89 (ไม่ต้องรอเส้น 35) พร้อมกำหนดโครงสร้าง 15M Plan A (89>200, 21>35, 21>89) อย่างเคร่งครัด
 ## =========================================================================
 import os
 import time
@@ -140,12 +141,12 @@ def analyze_market(symbol):
             "turn_down": h_val < h_prev,
             "c_above_89": c_15m > e89_15m,
             "c_below_89": c_15m < e89_15m,
-            "c_above_200": c_15m > e200_15m,
-            "c_below_200": c_15m < e200_15m,
             "e21_above_89": e21_15m > e89_15m,
             "e21_below_89": e21_15m < e89_15m,
             "e21_above_35": e21_15m > e35_15m,
-            "e21_below_35": e21_15m < e35_15m
+            "e21_below_35": e21_15m < e35_15m,
+            "e89_above_200": e89_15m > e200_15m,
+            "e89_below_200": e89_15m < e200_15m
         }
 
     return {"symbol": symbol, "pct_1h": pct_1h, "pct_24h": pct_24h, "vol_surge": vol_surge, "trend_1h": trend_1h, "tactical": tactical}
@@ -193,22 +194,24 @@ def main():
             if t["turn_up"]: macd_tags.append("🟢 Turn-Up")
             tag_str = f" `[{' | '.join(macd_tags)}]`" if macd_tags else ""
             
-            # 15M Squeeze Plan B (BUY)
-            if t["spread"] <= 0.382 and t["e21_above_35"] and t["c_above_89"] and t["c_above_200"]:
+            # Plan B: 15M Squeeze (บีบอัดเตรียมระเบิดขึ้น - Early Breakout Unlock)
+            if t["spread"] <= 0.382 and t["e21_above_35"] and t["e21_above_89"] and t["c_above_89"] and t["dist_89"] <= 0.382:
                 buy_squeeze.append(f"• `{sym_clean:<6}` ➔ Spread `{t['spread']:.2f}%`{tag_str}")
-            # Pullback Plan A (BUY)
-            elif t["dist_89"] <= 0.80 and t["e21_above_89"] and t["c_above_89"]:
+            
+            # Plan A: Pullback Zone (ย่อชิดแนวรับ - Full Structure 15M)
+            elif t["e89_above_200"] and t["e21_above_35"] and t["e21_above_89"] and t["c_above_89"] and t["dist_89"] <= 0.382:
                 buy_pullback.append(f"• `{sym_clean:<6}` ➔ ห่าง 89 `{t['dist_89']:.2f}%`{tag_str}")
                 
         elif r["trend_1h"] == "BEAR":
             if t["turn_down"]: macd_tags.append("🔴 Turn-Down")
             tag_str = f" `[{' | '.join(macd_tags)}]`" if macd_tags else ""
             
-            # 15M Squeeze Plan B (SELL)
-            if t["spread"] <= 0.382 and t["e21_below_35"] and t["c_below_89"] and t["c_below_200"]:
+            # Plan B: 15M Squeeze (บีบอัดเตรียมระเบิดลง - Early Breakout Unlock)
+            if t["spread"] <= 0.382 and t["e21_below_35"] and t["e21_below_89"] and t["c_below_89"] and t["dist_89"] <= 0.382:
                 sell_squeeze.append(f"• `{sym_clean:<6}` ➔ Spread `{t['spread']:.2f}%`{tag_str}")
-            # Bounce Short Plan A (SELL)
-            elif t["dist_89"] <= 0.80 and t["e21_below_89"] and t["c_below_89"]:
+            
+            # Plan A: Short on Bounce (เด้งชนแนวต้าน - Full Structure 15M)
+            elif t["e89_below_200"] and t["e21_below_35"] and t["e21_below_89"] and t["c_below_89"] and t["dist_89"] <= 0.382:
                 sell_bounce.append(f"• `{sym_clean:<6}` ➔ ห่าง 89 `{t['dist_89']:.2f}%`{tag_str}")
 
     # Top Gain/Loss/Vol
