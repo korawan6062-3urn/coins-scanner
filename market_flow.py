@@ -1,9 +1,8 @@
 ## =========================================================================
-## LOG VER: 4.0 (15M Tactical Radar & Strict AI Directive)
-## - อัปเกรดโครงสร้าง: ปรับปรุงจากการรายงานเหมาเข่ง 1H เป็นระบบสแกน 15M Pre-Trigger (ดัก Pullback และ Squeeze)
-## - คณิตศาสตร์ (Pure Logic): คำนวณ MACD 15M (Signal เป็น SMA) และ Zero-Station ตรงกับ TradingView 100%
-## - อัปเกรด AI Prompt: บังคับให้ AI ฟันธงระดับ Margin (100% / 50% / นั่งทับมือ), สรุปข่าวสด, และชี้เป้า Sector ย่อย
-## - Daily Calendar Trigger: เพิ่มระบบแจ้งเตือนปฏิทินเศรษฐกิจ Tier-1 ประจำวัน เฉพาะรอบเวลา 07:00 น. เท่านั้น
+## 📜 CHANGELOG HISTORY: MARKET FLOW & TACTICAL RADAR
+## -------------------------------------------------------------------------
+## LOG VER 4.0: [Base] อัปเกรดโครงสร้างจากการรายงานเหมาเข่ง 1H เป็น 15M Pre-Trigger (ดัก Pullback และ Squeeze), คำนวณ MACD (SMA) 100% ตาม TV, แจ้งข่าวเฉพาะ 07:00 น.
+## LOG VER 4.1: [Weekend Gate & AI Logic Lock] ติดตั้งระบบกรองวันหยุดสุดสัปดาห์ บล็อก AI มโนข่าว CPI และล็อกสถานะตลาด Gold (XAU) ปิดทำการ พร้อมบังคับตรรกะระดับ Margin ให้สอดคล้องกับ Capital Flow เด็ดขาด
 ## =========================================================================
 import os
 import time
@@ -157,6 +156,11 @@ def send_telegram_msg(message):
 def main():
     print(f"🚀 เริ่มสแกน 15M Tactical Radar (Watchlist: {len(WATCHLIST)} เหรียญ)...")
     
+    # ⏰ ตรวจสอบเวลาและวันหยุด (Time & Weekend Gate)
+    now_bkk = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=7)
+    is_weekend = now_bkk.weekday() >= 5 # 5 = Saturday, 6 = Sunday
+    is_0700 = (now_bkk.hour == 7)
+
     results, buy_pullback, buy_squeeze, sell_bounce = [], [], [], []
     
     with ThreadPoolExecutor(max_workers=10) as executor:
@@ -166,6 +170,9 @@ def main():
     for r in results:
         sym, t = r["symbol"], r["tactical"]
         if not t: continue
+        
+        # บล็อกสัญญาณ XAUUSDT ในช่วงสุดสัปดาห์
+        if is_weekend and sym == "XAUUSDT": continue
         
         sym_clean = sym.replace('USDT', '')
         macd_tags = []
@@ -201,34 +208,45 @@ def main():
     btc_perf = next((r["pct_24h"] for r in results if r["symbol"] == "BTCUSDT"), 0.0)
     gold_perf = next((r["pct_24h"] for r in results if r["symbol"] == "XAUUSDT"), 0.0)
 
-    # ⏰ ตรวจสอบเวลา 07:00 น. เพื่อขอตารางข่าวเศรษฐกิจ
-    now_bkk = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=7)
-    is_0700 = (now_bkk.hour == 7)
-    
+    # --- GEMINI STRICT AI DIRECTIVE & WEEKEND LOCK ---
     calendar_prompt = ""
     if is_0700:
-        calendar_prompt = "\n📅 *ตารางข่าวเศรษฐกิจประจำวัน (รอบ 07:00 น.):*\n• [สรุปกำหนดการข่าวเศรษฐกิจ Tier-1 สหรัฐฯ ของวันนี้ทั้งหมด พร้อมระบุเวลาไทย หากวันนี้ไม่มีให้ระบุว่าไม่มี]"
+        if is_weekend:
+            calendar_prompt = "\n📅 *ตารางข่าวเศรษฐกิจประจำวัน:*\n• วันเสาร์-อาทิตย์ ตลาดการเงินสหรัฐฯ ปิดทำการ (ไม่มีประกาศตัวเลขเศรษฐกิจ Tier-1)"
+        else:
+            calendar_prompt = "\n📅 *ตารางข่าวเศรษฐกิจประจำวัน (รอบ 07:00 น.):*\n• [สรุปกำหนดการข่าวเศรษฐกิจ Tier-1 สหรัฐฯ ของวันนี้ทั้งหมด พร้อมระบุเวลาไทย หากวันนี้ไม่มีให้ระบุว่าไม่มี]"
 
-    # --- GEMINI STRICT AI DIRECTIVE ---
+    news_instruction = (
+        "• สภาวะตลาดสุดสัปดาห์ ขับเคลื่อนด้วย Technical & Crypto Flow 100% (ห้ามอ้างอิงข่าวเศรษฐกิจสหรัฐฯ)" 
+        if is_weekend else 
+        "• [ตรวจสอบตัวเลขเศรษฐกิจ Tier-1 สหรัฐฯ หรือข่าวเทขายรุนแรงในชั่วโมงนี้ หากมีให้ระบุตัวเลขจริง สรุปผลกระทบ 1 บรรทัด และสั่ง '🛑 ให้นั่งทับมือรอจนกว่า...ระบุเวลา' หากไม่มีให้ระบุว่า 'สภาวะปกติ ขับเคลื่อนด้วย Technical Flow']"
+    )
+
+    gold_instruction = (
+        "• Gold (XAU): ตลาดปิดทำการ (Weekend Close) - ไม่เปิดสถานะเทรด" 
+        if is_weekend else 
+        "• Gold (XAU): [ระบุ BUY หรือ SELL] ➔ [ระบุบทบาททางเทคนิคหรือการเป็น Asset Hedge 1 ประโยค]"
+    )
+
     system_prompt = f"""
-คุณคือนักวิเคราะห์ Macro และ Quant Risk Manager หน้าที่ของคุณคือฟันธงทิศทางตลาดและออกคำสั่งความเสี่ยงประจำชั่วโมง ห้ามเขียนคำเกริ่นนำหรือคำบรรยายยืดเยื้อ ตอบตามโครงสร้างนี้อย่างเคร่งครัด:
+คุณคือนักวิเคราะห์ Macro และ Quant Risk Manager หน้าที่ของคุณคือฟันธงทิศทางตลาดและออกคำสั่งความเสี่ยงประจำชั่วโมง ห้ามเขียนคำเกริ่นนำ ห้ามใช้คำกำกวม และห้ามจินตนาการข่าวเศรษฐกิจในวันหยุด ตอบตามโครงสร้างนี้อย่างเคร่งครัด:
 
 🎙️ *AI MACRO & CAPITAL FLOW DIRECTIVE*
 {calendar_prompt}
 ⚠️ *สถานการณ์ข่าวเศรษฐกิจ & เหตุการณ์สำคัญ:*
-• [ตรวจสอบว่ามีตัวเลขเศรษฐกิจ Tier-1 สหรัฐฯ หรือข่าวเทขายรุนแรงในชั่วโมงนี้หรือไม่ หากมี ให้ระบุตัวเลขจริง สรุปผลกระทบ 1 บรรทัด และสั่ง "🛑 ให้นั่งทับมือรอจนกว่า...ระบุเวลา" หากไม่มี ให้ระบุว่า "สภาวะปกติ ขับเคลื่อนด้วย Technical Flow"]
+{news_instruction}
 
 🌊 *USD (DXY) & Capital Flow:*
 • [ประเมินดัชนีดอลลาร์สั้นๆ สรุปทิศทางการไหลเวียน เช่น USD > Gold > BTC > Altcoins]
 
 🎯 *คำสั่งบริหารพอร์ตและระดับ Margin ประจำชั่วโมง:*
-• ระดับ Margin: [เลือกตอบเพียง 1 อย่างเท่านั้น: "เทรดเต็มกำลัง (100% Full Margin)" หรือ "ลดความเสี่ยง 50% (Defensive Margin)" หรือ "🛑 นั่งทับมือ 100% (Cash Only)"] พร้อมระบุเหตุผลประกอบ 1 บรรทัด
+• ระดับ Margin: [เลือกตอบเพียง 1 อย่าง: "เทรดเต็มกำลัง (100% Full Margin)" หรือ "ลดความเสี่ยง 50% (Defensive Margin)" หรือ "🛑 นั่งทับมือ 100% (Cash Only)"] (บังคับ: การลด Margin ต้องเกิดจากความเสี่ยงทางกราฟหรือข่าวจริงเท่านั้น ห้ามสั่งลด Margin หากย้อนแย้งกับทิศทางเงินทุนที่ไหลเข้าสินทรัพย์เสี่ยง)
 • การจัดสรร Margin: [ระบุสัดส่วนสั้นๆ เช่น เงินสด/USDT __% | BTC __% | Altcoins __% | Gold __%]
 
 🧭 *ทิศทางการเทรดประจำชั่วโมง (Tactical Bias):*
 • BTC: [ระบุ BUY หรือ SELL] ➔ [ระบุจุดสังเกตหรือเงื่อนไข 1 ประโยค]
 • Altcoins: [ระบุ BUY หรือ SELL] ➔ [ระบุกลุ่ม Sector ที่มีเทรนด์ชัดเจนที่สุด เช่น Layer 1, AI, DeFi, High-Beta]
-• Gold (XAU): [ระบุ BUY หรือ SELL] ➔ [ระบุบทบาททางเทคนิคหรือการเป็น Asset Hedge 1 ประโยค]
+{gold_instruction}
 """
 
     ai_insight = "⚠️ ขัดข้อง ไม่สามารถเชื่อมต่อ AI ได้"
