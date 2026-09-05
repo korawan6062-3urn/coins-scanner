@@ -3,6 +3,8 @@
 ## -------------------------------------------------------------------------
 ## LOG VER 4.0: [Base] อัปเกรดโครงสร้างจากการรายงานเหมาเข่ง 1H เป็น 15M Pre-Trigger (ดัก Pullback และ Squeeze), คำนวณ MACD (SMA) 100% ตาม TV, แจ้งข่าวเฉพาะ 07:00 น.
 ## LOG VER 4.1: [Weekend Gate & AI Logic Lock] ติดตั้งระบบกรองวันหยุดสุดสัปดาห์ บล็อก AI มโนข่าว CPI และล็อกสถานะตลาด Gold (XAU) ปิดทำการ พร้อมบังคับตรรกะระดับ Margin ให้สอดคล้องกับ Capital Flow เด็ดขาด
+## LOG VER 4.2: [Full Strict Logic] ล็อกเงื่อนไข 15M Pullback/Squeeze ด้วย EMA21 และตำแหน่งราคา (Close) ป้องกันการรับมีด
+## LOG VER 4.3: [Unbound AI Bias] ถอดระบบ AI BTC Grounding ออก คืนอิสระให้กราฟหน้างานและปลดล็อก Bias จาก BTC เพื่อรองรับ Altcoins ที่มี Volume ไหลเข้าอิสระ
 ## =========================================================================
 import os
 import time
@@ -106,6 +108,8 @@ def analyze_market(symbol):
     tactical = None
     if df_15m is not None and len(df_15m) >= 250:
         c_15m = float(df_15m["close"].iloc[-2])
+        e21_15m = float(df_15m["close"].ewm(span=21, adjust=False).mean().iloc[-2])
+        e35_15m = float(df_15m["close"].ewm(span=35, adjust=False).mean().iloc[-2])
         e89_15m = float(df_15m["close"].ewm(span=89, adjust=False).mean().iloc[-2])
         e200_15m = float(df_15m["close"].ewm(span=200, adjust=False).mean().iloc[-2])
 
@@ -134,7 +138,14 @@ def analyze_market(symbol):
             "is_zero": zero_buy or zero_sell,
             "turn_up": h_val > h_prev,
             "turn_down": h_val < h_prev,
-            "close_above_89": c_15m > e89_15m
+            "c_above_89": c_15m > e89_15m,
+            "c_below_89": c_15m < e89_15m,
+            "c_above_200": c_15m > e200_15m,
+            "c_below_200": c_15m < e200_15m,
+            "e21_above_89": e21_15m > e89_15m,
+            "e21_below_89": e21_15m < e89_15m,
+            "e21_above_35": e21_15m > e35_15m,
+            "e21_below_35": e21_15m < e35_15m
         }
 
     return {"symbol": symbol, "pct_1h": pct_1h, "pct_24h": pct_24h, "vol_surge": vol_surge, "trend_1h": trend_1h, "tactical": tactical}
@@ -161,7 +172,7 @@ def main():
     is_weekend = now_bkk.weekday() >= 5 # 5 = Saturday, 6 = Sunday
     is_0700 = (now_bkk.hour == 7)
 
-    results, buy_pullback, buy_squeeze, sell_bounce = [], [], [], []
+    results, buy_pullback, buy_squeeze, sell_bounce, sell_squeeze = [], [], [], [], []
     
     with ThreadPoolExecutor(max_workers=10) as executor:
         for data in executor.map(analyze_market, WATCHLIST):
@@ -182,19 +193,22 @@ def main():
             if t["turn_up"]: macd_tags.append("🟢 Turn-Up")
             tag_str = f" `[{' | '.join(macd_tags)}]`" if macd_tags else ""
             
-            # Squeeze Plan B
-            if t["spread"] <= 0.382:
+            # 15M Squeeze Plan B (BUY)
+            if t["spread"] <= 0.382 and t["e21_above_35"] and t["c_above_89"] and t["c_above_200"]:
                 buy_squeeze.append(f"• `{sym_clean:<6}` ➔ Spread `{t['spread']:.2f}%`{tag_str}")
-            # Pullback Plan A (ห่างเส้นไม่เกิน 0.8%)
-            elif t["dist_89"] <= 0.80 and t["close_above_89"]:
+            # Pullback Plan A (BUY)
+            elif t["dist_89"] <= 0.80 and t["e21_above_89"] and t["c_above_89"]:
                 buy_pullback.append(f"• `{sym_clean:<6}` ➔ ห่าง 89 `{t['dist_89']:.2f}%`{tag_str}")
                 
         elif r["trend_1h"] == "BEAR":
             if t["turn_down"]: macd_tags.append("🔴 Turn-Down")
             tag_str = f" `[{' | '.join(macd_tags)}]`" if macd_tags else ""
             
-            # Bounce Short Plan A
-            if t["dist_89"] <= 0.80 and not t["close_above_89"]:
+            # 15M Squeeze Plan B (SELL)
+            if t["spread"] <= 0.382 and t["e21_below_35"] and t["c_below_89"] and t["c_below_200"]:
+                sell_squeeze.append(f"• `{sym_clean:<6}` ➔ Spread `{t['spread']:.2f}%`{tag_str}")
+            # Bounce Short Plan A (SELL)
+            elif t["dist_89"] <= 0.80 and t["e21_below_89"] and t["c_below_89"]:
                 sell_bounce.append(f"• `{sym_clean:<6}` ➔ ห่าง 89 `{t['dist_89']:.2f}%`{tag_str}")
 
     # Top Gain/Loss/Vol
@@ -276,11 +290,13 @@ def main():
         "🟢 *ฝั่ง BUY (โครงสร้าง 1H ขาขึ้น):*",
         "• *Pullback Zone (ย่อชิดแนวรับ):*",
         "\n".join(buy_pullback) if buy_pullback else "  - ไม่มีเหรียญเข้าโซน",
-        "• *15M Squeeze (บีบอัดเตรียมระเบิด):*",
+        "• *15M Squeeze (บีบอัดเตรียมระเบิดขึ้น):*",
         "\n".join(buy_squeeze) if buy_squeeze else "  - ไม่มีเหรียญเข้าโซน\n",
         "🔴 *ฝั่ง SELL (โครงสร้าง 1H ขาลง):*",
         "• *Short on Bounce (เด้งชนแนวต้าน):*",
         "\n".join(sell_bounce) if sell_bounce else "  - ไม่มีเหรียญเข้าโซน",
+        "• *15M Squeeze (บีบอัดเตรียมระเบิดลง):*",
+        "\n".join(sell_squeeze) if sell_squeeze else "  - ไม่มีเหรียญเข้าโซน",
         "────────────────────────────",
         f"{ai_insight}"
     ]
